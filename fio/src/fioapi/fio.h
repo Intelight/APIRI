@@ -41,12 +41,15 @@ This file contains all definitions for the FIO API.
 
 
 /* Local includes. */
-#include "fioapi.h"	/* FIO Type Definitions */
+#include "fiodriver.h"	/* FIO Driver Definitions */
 
 
 /*  Definition section.
 -----------------------------------------------------------------------------*/
 /*  Module public structure/enum definition.*/
+
+/* File used to open FIO Driver */
+#define	FIO_DEV		"/dev/fio"
 
 
 /*  Global section.
@@ -122,12 +125,6 @@ extern	int fio_fiod_outputs_reservation_get( FIO_APP_HANDLE,
 					FIO_VIEW,
 					unsigned char *,
 					unsigned int );
-
-/* Begin multi-device outputs set transaction */
-extern int fio_fiod_begin_outputs_set( FIO_APP_HANDLE );
-
-/* Commit multi-device outputs set transaction */
-extern int fio_fiod_commit_outputs_set( FIO_APP_HANDLE );
 
 extern int fio_fiod_channel_map_count( FIO_APP_HANDLE,
                                        FIO_DEV_HANDLE,
@@ -232,13 +229,12 @@ extern int fio_fiod_inputs_filter_set( FIO_APP_HANDLE,
 					FIO_INPUT_FILTER *,
 					unsigned int );
 					
-extern int fio_fiod_frame_read( FIO_APP_HANDLE fh,
-                                FIO_DEV_HANDLE dh,
-                                unsigned int rx_frame,
-                                unsigned int *seq_number,
-                                unsigned char *buf,
-                                unsigned int count,
-                                unsigned int timeout);
+extern int fio_fiod_frame_read( FIO_APP_HANDLE,
+                                FIO_DEV_HANDLE,
+                                unsigned int,
+                                unsigned int *,
+                                unsigned char *,
+                                unsigned int);
                                 
 extern int fio_fiod_frame_size( FIO_APP_HANDLE,
                                 FIO_DEV_HANDLE,
@@ -291,6 +287,10 @@ extern int fio_fiod_wd_reservation_set( FIO_APP_HANDLE fh,
 					FIO_DEV_HANDLE dh,
 					unsigned int op);
 
+extern int fio_fiod_wd_rate_set( FIO_APP_HANDLE fh,
+					FIO_DEV_HANDLE dh,
+					FIO_HZ rate);
+
 extern int fio_fiod_wd_heartbeat( FIO_APP_HANDLE fh,
 					FIO_DEV_HANDLE dh);
 					
@@ -308,7 +308,9 @@ extern int fio_fiod_frame_write( FIO_APP_HANDLE fh,
 					unsigned char *payload,
 					unsigned int count);
 
-					
+extern int fio_ts2_port1_state( FIO_APP_HANDLE fh, FIO_PORT port,
+                                        FIO_TS2_PORT1_STATE * );
+				
 #endif /* #ifndef _FIO_API_H_ */
 
 

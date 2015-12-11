@@ -40,13 +40,7 @@ FIO Message Scheduler (FIOMSG).
 #include	<linux/list.h>		/* List definitions */
 #include	<linux/ioctl.h>		/* IOCTL definitions */
 #include	<linux/slab.h>		/* Memory Definitions */
-#include        <linux/time.h>
-#include        <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
-#include        <asm/semaphore.h>
-#else
 #include	<linux/semaphore.h>
-#endif
 
 /* Local includes. */
 #include	"fiodriver.h"		/* FIO Driver Definitions */
@@ -72,7 +66,6 @@ typedef ktime_t				FIOMSG_TIME;
 typedef struct hrtimer			FIOMSG_TIMER;
 #define FIOMSG_CLOCKS_PER_SEC		NSEC_PER_SEC
 #define FIOMSG_CURRENT_TIME		ktime_get()
-#define FIOMSG_TIME_TO_NSECS(a)         (long)ktime_to_ns(a)
 #define	FIOMSG_TIME_AFTER_EQ(a,b)	((a).tv64 >= (b).tv64)
 #define FIOMSG_TIME_AFTER(a,b)		((a).tv64 > (b).tv64)
 #define FIOMSG_TIME_EQUAL(a,b)		ktime_equal(a,b)
@@ -81,9 +74,6 @@ typedef struct hrtimer			FIOMSG_TIMER;
 #define FIOMSG_TIME_ADD(a,b)		ktime_add_ns(a,b)
 #define FIOMSG_TIME_SUB(a,b)		ktime_sub(a,b)
 #define FIOMSG_TIME_MOD(a,b)		((long)ktime_to_ns(a) % b)
-#define FIOMSG_TIME_ALIGN(a,b)          ({ u32 _tmp = ktime_to_ms(a); \
-                                                _tmp = _tmp - (_tmp % (MSEC_PER_SEC/b)); \
-                                                a = ms_to_ktime(_tmp);})
 #define FIOMSG_TIMER_INIT(a)		hrtimer_init(a,CLOCK_MONOTONIC,HRTIMER_MODE_ABS)
 #define FIOMSG_TIMER_START(a,b)		hrtimer_start_range_ns(a,b,100000L,HRTIMER_MODE_ABS)
 #define FIOMSG_TIMER_CANCEL(a)		hrtimer_cancel(a)
@@ -95,7 +85,6 @@ typedef	unsigned long			FIOMSG_TIME;
 typedef struct timer_list		FIOMSG_TIMER;
 #define FIOMSG_CLOCKS_PER_SEC		HZ
 #define FIOMSG_CURRENT_TIME		(jiffies)
-#define FIOMSG_TIME_TO_NSECS(a)         (jiffies_to_usecs(a) * NSEC_PER_USEC)
 #define	FIOMSG_TIME_AFTER_EQ(a,b)	time_after_eq(a,b)
 #define FIOMSG_TIME_AFTER(a,b)		time_after(a,b)
 #define FIOMSG_TIME_EQUAL(a,b)		(a == b)
@@ -104,7 +93,6 @@ typedef struct timer_list		FIOMSG_TIMER;
 #define FIOMSG_TIME_ADD(a,b)		(a + b)
 #define FIOMSG_TIME_SUB(a,b)		(a - b)
 #define FIOMSG_TIME_MOD(a,b)		(a % b)
-#define FIOMSG_TIME_ALIGN(a,b)          (a = a - (a % (HZ/b)))
 #define FIOMSG_TIMER_INIT(a)		init_timer(a)
 #define FIOMSG_TIMER_START(a,b)		({ (a)->expires = b; \
 						(a)->data = (unsigned long)a; \
@@ -155,8 +143,6 @@ struct fiomsg_port
 	FIOMSG_RX_PENDING	rx_pend[FIOMSG_RX_PEND_MAX];
 	struct list_head	rx_fiod_list[FIOD_MAX];		/* List of FIOD responses */
 								/* RX Buffer for this port */
-        wait_queue_head_t       read_wait;                      /* Wait queue for read frame calls */
-        
 	u8			rx_buffer[FIOMSG_RX_BUFFER];
 };
 typedef	struct fiomsg_port	FIOMSG_PORT;
@@ -194,8 +180,7 @@ struct fiomsg_tx_frame
 							/* TX Frame update func to call */
 	void			(*tx_func)( struct fiomsg_tx_frame * );
 	void			*fioman_context;	/* Context for tx_func */
-        struct fasync_struct    *notify_async_queue;
-        
+
 	bool			resp;			/* Is a response expected */
 	u16			len;			/* Length of Request Frame */
 	u8			frame[1];		/* Actual frame data */
@@ -236,7 +221,7 @@ void fiomsg_exit( void );
 void fiomsg_tx_remove_fiod( FIO_IOC_FIOD* );
 void fiomsg_rx_remove_fiod( FIO_IOC_FIOD* );
 void fiomsg_port_disable( FIO_IOC_FIOD* );
-int fiomsg_port_comm_status( FIO_IOC_FIOD* );
+int fiomsg_port_comm_status( FIO_PORT );
 int fiomsg_port_enable( FIOMSG_PORT* );
 void fiomsg_tx_add_frame( FIOMSG_PORT*,	FIOMSG_TX_FRAME*);
 void fiomsg_rx_add_frame( FIOMSG_PORT*, FIOMSG_RX_FRAME*);

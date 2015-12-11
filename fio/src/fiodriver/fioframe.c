@@ -37,7 +37,7 @@ FIOFRAME Code Module.
 #include	<linux/slab.h>		/* Memory Definitions */
 #include	<linux/time.h>
 #include	<asm/uaccess.h>		/* User Space Access Definitions */
-#include        <linux/version.h>
+
 /* Local includes. */
 #include	"fiomsg.h"
 #include	"fioframe.h"
@@ -46,7 +46,7 @@ FIOFRAME Code Module.
 -----------------------------------------------------------------------------*/
 extern struct list_head	fioman_fiod_list;
 extern int fiomsg_get_hertz(FIO_HZ freq);
-extern FIOMSG_TIME fiomsg_tx_frame_when(FIO_HZ freq, bool align);
+extern FIOMSG_TIME fiomsg_tx_frame_when(FIO_HZ freq);
 extern int local_time_offset;
 
 /*  Global section.
@@ -230,125 +230,6 @@ static FIOMSG_TX_FRAME frame_20_23_init =
 
 /*  Private API implementation section.
 -----------------------------------------------------------------------------*/
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
-/** The time_to_tm conversion utility, backported from later Linux kernel **/
-struct tm {
-	/*
-	 * the number of seconds after the minute, normally in the range
-	 * 0 to 59, but can be up to 60 to allow for leap seconds
-	 */
-	int tm_sec;
-	/* the number of minutes after the hour, in the range 0 to 59*/
-	int tm_min;
-	/* the number of hours past midnight, in the range 0 to 23 */
-	int tm_hour;
-	/* the day of the month, in the range 1 to 31 */
-	int tm_mday;
-	/* the number of months since January, in the range 0 to 11 */
-	int tm_mon;
-	/* the number of years since 1900 */
-	long tm_year;
-	/* the number of days since Sunday, in the range 0 to 6 */
-	int tm_wday;
-	/* the number of days since January 1, in the range 0 to 365 */
-	int tm_yday;
-};
-/*
- * Nonzero if YEAR is a leap year (every 4 years,
- * except every 100th isn't, and every 400th is).
- */
-static int __isleap(long year)
-{
-	return (year) % 4 == 0 && ((year) % 100 != 0 || (year) % 400 == 0);
-}
-
-/* do a mathdiv for long type */
-static long math_div(long a, long b)
-{
-	return a / b - (a % b < 0);
-}
-
-/* How many leap years between y1 and y2, y1 must less or equal to y2 */
-static long leaps_between(long y1, long y2)
-{
-	long leaps1 = math_div(y1 - 1, 4) - math_div(y1 - 1, 100)
-		+ math_div(y1 - 1, 400);
-	long leaps2 = math_div(y2 - 1, 4) - math_div(y2 - 1, 100)
-		+ math_div(y2 - 1, 400);
-	return leaps2 - leaps1;
-}
-
-/* How many days come before each month (0-12). */
-static const unsigned short __mon_yday[2][13] = {
-	/* Normal years. */
-	{0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365},
-	/* Leap years. */
-	{0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366}
-};
-
-#define SECS_PER_HOUR	(60 * 60)
-#define SECS_PER_DAY	(SECS_PER_HOUR * 24)
-
-/**
- * time_to_tm - converts the calendar time to local broken-down time
- *
- * @totalsecs	the number of seconds elapsed since 00:00:00 on January 1, 1970,
- *		Coordinated Universal Time (UTC).
- * @offset	offset seconds adding to totalsecs.
- * @result	pointer to struct tm variable to receive broken-down time
- */
-void time_to_tm(time_t totalsecs, int offset, struct tm *result)
-{
-	long days, rem, y;
-	const unsigned short *ip;
-
-	days = totalsecs / SECS_PER_DAY;
-	rem = totalsecs % SECS_PER_DAY;
-	rem += offset;
-	while (rem < 0) {
-		rem += SECS_PER_DAY;
-		--days;
-	}
-	while (rem >= SECS_PER_DAY) {
-		rem -= SECS_PER_DAY;
-		++days;
-	}
-
-	result->tm_hour = rem / SECS_PER_HOUR;
-	rem %= SECS_PER_HOUR;
-	result->tm_min = rem / 60;
-	result->tm_sec = rem % 60;
-
-	/* January 1, 1970 was a Thursday. */
-	result->tm_wday = (4 + days) % 7;
-	if (result->tm_wday < 0)
-		result->tm_wday += 7;
-
-	y = 1970;
-
-	while (days < 0 || days >= (__isleap(y) ? 366 : 365)) {
-		/* Guess a corrected year, assuming 365 days per year. */
-		long yg = y + math_div(days, 365);
-
-		/* Adjust DAYS and Y to match the guessed year. */
-		days -= (yg - y) * 365 + leaps_between(y, yg);
-		y = yg;
-	}
-
-	result->tm_year = y - 1900;
-
-	result->tm_yday = days;
-
-	ip = __mon_yday[__isleap(y)];
-	for (y = 11; days < ip[y]; y--)
-		continue;
-	days -= ip[y];
-
-	result->tm_mon = y;
-	result->tm_mday = days + 1;
-}
-#endif
-
 u8 device_to_addr( FIO_DEVICE_TYPE device_type )
 {
 	u8	frame_addr = 20;	/* Default for 2070-2A, 2070-8, 2070-2N */
@@ -445,7 +326,7 @@ fioman_ready_frame_49
 		p_tx->fiod = p_sys_fiod->fiod;
 		p_sys_fiod->status_reset = 0xff;	/* initially clear status bits */
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_49] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_49] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_49] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -521,9 +402,9 @@ fioman_ready_frame_51
 		p_tx->fiod = p_sys_fiod->fiod;
 		p_tx->len = tx_len;
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_51] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_51] = p_tx->cur_freq;
-		/*pr_debug("frame %d ready(%llu), when=%llu, freq=%d\n", FIOMAN_FRAME_NO_51, FIOMSG_CURRENT_TIME.tv64,
-				p_tx->when.tv64, p_tx->cur_freq);*/
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_51] = p_tx->cur_freq;
+		pr_debug("frame %d ready(%llu), when=%llu, freq=%d\n", FIOMAN_FRAME_NO_51, FIOMSG_CURRENT_TIME.tv64,
+				p_tx->when.tv64, p_tx->cur_freq);
 	}
 	else
 	{
@@ -611,7 +492,7 @@ fioman_ready_frame_52
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_52] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_52] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_52] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -638,7 +519,7 @@ fioman_tx_frame_52
 )
 {
 /* TEG DEL */
-/*pr_debug( "UPDATING Frame 52\n" );*/
+pr_debug( "UPDATING Frame 52\n" );
 /* TEG DEL */
 }
 
@@ -674,7 +555,7 @@ fioman_ready_frame_53
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_53] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_53] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_53] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -701,7 +582,7 @@ fioman_tx_frame_53
 )
 {
 /* TEG DEL */
-/*pr_debug( "UPDATING Frame 53\n" );*/
+pr_debug( "UPDATING Frame 53\n" );
 /* TEG DEL */
 }
 
@@ -810,7 +691,7 @@ fioman_ready_frame_55
 		p_tx->fiod = p_sys_fiod->fiod;
 		p_tx->len = tx_len;
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_55] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_55] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_55] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -838,9 +719,10 @@ fioman_tx_frame_55
 {
 	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* For access to System info */
 	int i, count;
+	bool print_flag = false;
 	unsigned long	flags;
 /* TEG DEL */
-/*pr_debug( "UPDATING Frame 55:\n" );*/
+pr_debug( "UPDATING Frame 55:\n" );
 /* copy output data and ctrl bitmaps to outgoing frame, translate mapping */
 
 	/* Get access to system info */
@@ -852,29 +734,29 @@ fioman_tx_frame_55
 	for(i=0;i<count;i++) {
 		if (FIOMSG_PAYLOAD(p_tx_frame)->frame_info[i] != p_sys_fiod->outputs_plus[i]) {
 			FIOMSG_PAYLOAD(p_tx_frame)->frame_info[i] = p_sys_fiod->outputs_plus[i];
+			print_flag = true;
 		}
 		if (FIOMSG_PAYLOAD(p_tx_frame)->frame_info[i+count] !=
 				(p_sys_fiod->outputs_minus[i] ^ p_sys_fiod->outputs_plus[i])) {
 			FIOMSG_PAYLOAD(p_tx_frame)->frame_info[i+count] =
 				(p_sys_fiod->outputs_minus[i] ^ p_sys_fiod->outputs_plus[i]);
+			print_flag = true;
 		}
 	}
 
-	/* For TS1 & TS2 set the Fault Monitor output */
+	/* For TS1 & TS2 set the Fault Monitor and Voltage Monitor output */
 	if (p_sys_fiod->fiod.fiod == FIOTS1 || p_sys_fiod->fiod.fiod == FIOTS2) {
 		FIO_BIT_CLEAR(&FIOMSG_PAYLOAD(p_tx_frame)->frame_info[count], 78);
 		if (p_sys_fiod->fm_state == FIO_TS_FM_OFF)
 			FIO_BIT_SET(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, 78);
 		else
 			FIO_BIT_CLEAR(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, 78);
-		/* For TS1 set the Volt Monitor output */
-		if (p_sys_fiod->fiod.fiod == FIOTS1) {
-			FIO_BIT_CLEAR(&FIOMSG_PAYLOAD(p_tx_frame)->frame_info[count], 79);
-			if (p_sys_fiod->vm_state == FIO_TS1_VM_OFF)
-				FIO_BIT_SET(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, 79);
-			else
-				FIO_BIT_CLEAR(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, 79);
-		}
+
+		FIO_BIT_CLEAR(&FIOMSG_PAYLOAD(p_tx_frame)->frame_info[count], 79);
+		if (p_sys_fiod->vm_state == FIO_TS1_VM_OFF)
+			FIO_BIT_SET(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, 79);
+		else
+			FIO_BIT_CLEAR(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, 79);
 	}
 #if 0
 // Watchdog output now passed in outputs array
@@ -886,6 +768,24 @@ fioman_tx_frame_55
 		else
 			FIO_BIT_CLEAR(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, p_sys_fiod->watchdog_output);
 	}		
+#else
+        if ((p_sys_fiod->watchdog_output >= 0)
+                && (p_sys_fiod->watchdog_rate > FIO_HZ_ONCE) 
+                && (p_tx_frame->cur_freq > FIO_HZ_ONCE)) {
+                if (p_sys_fiod->watchdog_countdown == 0) {
+                        /* toggle output */
+                        p_sys_fiod->watchdog_state = !p_sys_fiod->watchdog_state;
+                        /* refresh count */
+                        p_sys_fiod->watchdog_countdown = 
+                                fiomsg_get_hertz(p_tx_frame->cur_freq) / fiomsg_get_hertz(p_sys_fiod->watchdog_rate);
+                }
+                p_sys_fiod->watchdog_countdown--;
+                FIO_BIT_CLEAR(&FIOMSG_PAYLOAD(p_tx_frame)->frame_info[count], p_sys_fiod->watchdog_output);
+                if (p_sys_fiod->watchdog_state)
+                        FIO_BIT_SET(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, p_sys_fiod->watchdog_output);
+                else
+                        FIO_BIT_CLEAR(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, p_sys_fiod->watchdog_output);
+        }
 #endif
 	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
 	pr_debug( "UPDATING Frame 55: %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x\n",
@@ -931,7 +831,7 @@ fioman_ready_frame_62
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_62] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_62] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_62] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -1001,7 +901,7 @@ fioman_ready_frame_66
 		p_tx->when = FIOMSG_CURRENT_TIME;		/* Set when to send frame */
 		p_tx->fiod = p_sys_fiod->fiod;
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_66] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_66] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_66] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -1072,7 +972,7 @@ fioman_ready_frame_67
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_67] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_67] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_67] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -1196,7 +1096,8 @@ fioman_ready_frame_9
 	/* kalloc the actual frame 9 for this port */
 	/* -1 is for the one byte of frame payload defined in FIOMSG_TX_FRAME */
 	if ( ( p_tx = (FIOMSG_TX_FRAME *)kmalloc( sizeof( FIOMSG_TX_FRAME ) - 1
-                                        + FIOMAN_FRAME_NO_9_SIZE, GFP_KERNEL ) ) )
+											+ FIOMAN_FRAME_NO_9_SIZE,
+											GFP_KERNEL ) ) )
 	{
 		/* kmalloc succeeded, therefore init buffer */
 		memcpy( p_tx, &frame_9_init, sizeof( frame_9_init ) );
@@ -1205,12 +1106,15 @@ fioman_ready_frame_9
 		FIOMSG_PAYLOAD( p_tx )->frame_no = FIOMAN_FRAME_NO_9;
 
 		INIT_LIST_HEAD( &p_tx->elem );
-		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq, true); /* Set when to send first frame */
-		pr_debug("frame %d ready(%lu), when=%lu\n", FIOMAN_FRAME_NO_9, FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME),
-				FIOMSG_TIME_TO_NSECS(p_tx->when));
+		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq);		/* Set when to send frame */
+		/* round to next transmit boundary */
+		p_tx->when = ktime_sub_ns( p_tx->when,
+				((unsigned long)(ktime_to_ns(p_tx->when)) % (FIOMSG_CLOCKS_PER_SEC / fiomsg_get_hertz(p_tx->cur_freq))) );
+		pr_debug("frame %d ready(%llu), when=%llu\n", FIOMAN_FRAME_NO_9, FIOMSG_CURRENT_TIME.tv64,
+				p_tx->when.tv64);
 		p_tx->fiod = p_sys_fiod->fiod;
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_9] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_9] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_9] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -1304,13 +1208,16 @@ fioman_ready_frame_0
 		FIOMSG_PAYLOAD( p_tx )->frame_no = FIOMAN_FRAME_NO_0;
 
 		INIT_LIST_HEAD( &p_tx->elem );
-		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq, true);	/* Set when to send first frame */
+		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq);		/* Set when to send frame */
+		/* round to next transmit boundary */
+		p_tx->when = ktime_sub_ns( p_tx->when,
+			((unsigned long)(ktime_to_ns(p_tx->when)) % (FIOMSG_CLOCKS_PER_SEC / fiomsg_get_hertz(p_tx->cur_freq))) );
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
-		pr_debug("frame %d ready(%lu), when=%lu\n", FIOMAN_FRAME_NO_0, FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME),
-				FIOMSG_TIME_TO_NSECS(p_tx->when));
+		pr_debug("frame %d ready(%llu), when=%llu\n", FIOMAN_FRAME_NO_0, FIOMSG_CURRENT_TIME.tv64,
+				p_tx->when.tv64);
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_0] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_0] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_0] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -1447,13 +1354,16 @@ fioman_ready_frame_1
 		FIOMSG_PAYLOAD( p_tx )->frame_no = FIOMAN_FRAME_NO_1;
 
 		INIT_LIST_HEAD( &p_tx->elem );
-		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq, true);	/* Set when to send first frame */
+		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq);		/* Set when to send frame */
+		/* round to next transmit boundary */
+		p_tx->when = ktime_sub_ns( p_tx->when,
+			((unsigned long)(ktime_to_ns(p_tx->when)) % (FIOMSG_CLOCKS_PER_SEC / fiomsg_get_hertz(p_tx->cur_freq))) );
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
-		pr_debug("frame %d ready(%lu), when=%lu\n", FIOMAN_FRAME_NO_1, FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME),
-				FIOMSG_TIME_TO_NSECS(p_tx->when));
+		pr_debug("frame %d ready(%llu), when=%llu\n", FIOMAN_FRAME_NO_1, FIOMSG_CURRENT_TIME.tv64,
+				p_tx->when.tv64);
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_1] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_1] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_1] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -1493,15 +1403,18 @@ fioman_ready_frame_3
 		FIOMSG_PAYLOAD( p_tx )->frame_no = FIOMAN_FRAME_NO_3;
 
 		INIT_LIST_HEAD( &p_tx->elem );
-		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq, true);	/* Set when to send first frame */
+		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq);	/* Set when to send frame */
+		/* round to next transmit boundary */
+		p_tx->when = ktime_sub_ns( p_tx->when,
+			((unsigned long)(ktime_to_ns(p_tx->when)) % (FIOMSG_CLOCKS_PER_SEC / fiomsg_get_hertz(p_tx->cur_freq))) );
 		/* add window offset according to spec */
 		p_tx->when = FIOMSG_TIME_ADD( p_tx->when, (FIOMSG_CLOCKS_PER_SEC / fiomsg_get_hertz(FIO_HZ_10)) );
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
-		pr_debug("frame %d ready(%lu), when=%lu\n", FIOMAN_FRAME_NO_3, FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME),
-				FIOMSG_TIME_TO_NSECS(p_tx->when));
+		pr_debug("frame %d ready(%llu), when=%llu\n", FIOMAN_FRAME_NO_3, FIOMSG_CURRENT_TIME.tv64,
+				p_tx->when.tv64);
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_3] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_3] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_3] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -1542,13 +1455,16 @@ fioman_ready_frame_10_11
 		FIOMSG_PAYLOAD( p_tx )->frame_no = frame_no;
 
 		INIT_LIST_HEAD( &p_tx->elem );
-		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq, true);	/* Set when to send first frame */
+		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq);		/* Set when to send frame */
+		/* round to next transmit boundary */
+		p_tx->when = ktime_sub_ns( p_tx->when,
+			((unsigned long)(ktime_to_ns(p_tx->when)) % (FIOMSG_CLOCKS_PER_SEC / fiomsg_get_hertz(p_tx->cur_freq))) );
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
-		pr_debug("frame %d ready(%lu), when=%lu\n", frame_no, FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME),
-				FIOMSG_TIME_TO_NSECS(p_tx->when));
+		pr_debug("frame %d ready(%llu), when=%llu\n", frame_no, FIOMSG_CURRENT_TIME.tv64,
+				p_tx->when.tv64);
                 if (p_sys_fiod->frame_frequency_table[frame_no] == -1)
-		p_sys_fiod->frame_frequency_table[frame_no] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[frame_no] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -1639,13 +1555,16 @@ fioman_ready_frame_12_13
 		FIOMSG_PAYLOAD( p_tx )->frame_no = frame_no;
 
 		INIT_LIST_HEAD( &p_tx->elem );
-		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq, true);	/* Set when to send first frame */
+		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq);		/* Set when to send frame */
+		/* round to next transmit boundary */
+		p_tx->when = ktime_sub_ns( p_tx->when,
+			((unsigned long)(ktime_to_ns(p_tx->when)) % (FIOMSG_CLOCKS_PER_SEC / fiomsg_get_hertz(p_tx->cur_freq))) );
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
-		pr_debug("frame %d ready(%lu), when=%lu\n", frame_no, FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME),
-				FIOMSG_TIME_TO_NSECS(p_tx->when));
+		pr_debug("frame %d ready(%llu), when=%llu\n", frame_no, FIOMSG_CURRENT_TIME.tv64,
+				p_tx->when.tv64);
                 if (p_sys_fiod->frame_frequency_table[frame_no] == -1)
-		p_sys_fiod->frame_frequency_table[frame_no] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[frame_no] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -1686,7 +1605,7 @@ fioman_tx_frame_12_13
 	}
 	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
 	/* TEG DEL */
-	/*pr_debug("UPDATING Frame 10/11: %x %x %x %x %x %x\n",
+	/*pr_debug( "UPDATING Frame 10/11: %x %x %x %x %x %x\n",
 			p_tx_frame->frame[3], p_tx_frame->frame[4], p_tx_frame->frame[5],
 			p_tx_frame->frame[6], p_tx_frame->frame[7], p_tx_frame->frame[8] );*/
 
@@ -1720,11 +1639,14 @@ fioman_ready_frame_18
 		FIOMSG_PAYLOAD( p_tx )->frame_no = FIOMAN_FRAME_NO_18;
 
 		INIT_LIST_HEAD( &p_tx->elem );
-		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq, true);	/* Set when to send first frame */
-		pr_debug("frame %d ready(%lu), when=%lu\n", FIOMAN_FRAME_NO_18, FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME),
-				FIOMSG_TIME_TO_NSECS(p_tx->when));
+		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq);		/* Set when to send frame */
+		/* round to next transmit boundary */
+		p_tx->when = ktime_sub_ns( p_tx->when,
+			((unsigned long)(ktime_to_ns(p_tx->when)) % (FIOMSG_CLOCKS_PER_SEC / fiomsg_get_hertz(p_tx->cur_freq))) );
+		pr_debug("frame %d ready(%llu), when=%llu\n", FIOMAN_FRAME_NO_18, FIOMSG_CURRENT_TIME.tv64,
+				p_tx->when.tv64);
                 if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_18] == -1)
-		p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_18] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_18] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -1764,13 +1686,16 @@ fioman_ready_frame_20_23
 		FIOMSG_PAYLOAD( p_tx )->frame_no = frame_no;
 
 		INIT_LIST_HEAD( &p_tx->elem );
-		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq, true);	/* Set when to send first frame */
+		p_tx->when = fiomsg_tx_frame_when(p_tx->cur_freq);		/* Set when to send frame */
+		/* round to next transmit boundary */
+		p_tx->when = ktime_sub_ns( p_tx->when,
+			((unsigned long)(ktime_to_ns(p_tx->when)) % (FIOMSG_CLOCKS_PER_SEC / fiomsg_get_hertz(p_tx->cur_freq))) );
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
-		pr_debug("frame %d ready(%lu), when=%lu\n", frame_no, FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME),
-				FIOMSG_TIME_TO_NSECS(p_tx->when));
+		pr_debug("frame %d ready(%llu), when=%llu\n", frame_no, FIOMSG_CURRENT_TIME.tv64,
+				p_tx->when.tv64);
                 if (p_sys_fiod->frame_frequency_table[frame_no] == -1)
-		p_sys_fiod->frame_frequency_table[frame_no] = p_tx->cur_freq;
+                        p_sys_fiod->frame_frequency_table[frame_no] = p_tx->cur_freq;
 	}
 	else
 	{
@@ -2343,10 +2268,10 @@ fioman_rx_frame_129
 	FIOMSG_RX_FRAME		*p_rx_frame		/* Frame received */
 )
 {
-	/*FIOMAN_SYS_FIOD		*p_sys_fiod;*/	/* For access to System info */
+	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* For access to System info */
 
 	/* Get access to system info */
-	/*p_sys_fiod = (FIOMAN_SYS_FIOD *)p_rx_frame->fioman_context;*/
+	p_sys_fiod = (FIOMAN_SYS_FIOD *)p_rx_frame->fioman_context;
 
 /* TEG DEL */
 /*pr_debug( "UPDATING Frame 129\n" );*/
@@ -2366,10 +2291,10 @@ fioman_rx_frame_131
 	FIOMSG_RX_FRAME		*p_rx_frame		/* Frame received */
 )
 {
-	/*FIOMAN_SYS_FIOD		*p_sys_fiod;*/	/* For access to System info */
+	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* For access to System info */
 
 	/* Get access to system info */
-	/*p_sys_fiod = (FIOMAN_SYS_FIOD *)p_rx_frame->fioman_context;*/
+	p_sys_fiod = (FIOMAN_SYS_FIOD *)p_rx_frame->fioman_context;
 
 /* TEG DEL */
 /*pr_debug( "UPDATING Frame 131\n" );*/
@@ -2506,11 +2431,11 @@ fioman_rx_frame_179
 	FIOMSG_RX_FRAME		*p_rx_frame		/* Frame received */
 )
 {
-	/*FIOMAN_SYS_FIOD		*p_sys_fiod;*/	/* For access to System info */
+	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* For access to System info */
 	unsigned char		status;
 
 	/* Get access to system info */
-	/*p_sys_fiod = (FIOMAN_SYS_FIOD *)p_rx_frame->fioman_context;*/
+	p_sys_fiod = (FIOMAN_SYS_FIOD *)p_rx_frame->fioman_context;
 
 /* TEG DEL */
 /*printk( KERN_ALERT "UPDATING Frame 179\n" );*/
@@ -2653,12 +2578,12 @@ fioman_rx_frame_182
                         if ((p_app_fiod->transition_status != FIO_TRANS_APP_OVERRUN)
                                 && ((entry.input_point == 0x7f) /* rollover entry */
                                 || FIO_BIT_TEST(p_app_fiod->input_transition_map, entry.input_point))) {
-                                if (FIOMAN_FIFO_AVAIL(p_app_fiod->transition_fifo) < sizeof(FIO_TRANS_BUFFER)) {
+                                if (kfifo_avail(&p_app_fiod->transition_fifo) < sizeof(FIO_TRANS_BUFFER)) {
                                         // app fifo status is overflow
                                         if (p_app_fiod->transition_status == FIO_TRANS_SUCCESS)
                                                 p_app_fiod->transition_status = FIO_TRANS_APP_OVERRUN;
                                 } else {
-                                        FIOMAN_FIFO_PUT(p_app_fiod->transition_fifo, &entry, sizeof(FIO_TRANS_BUFFER));
+                                        kfifo_in(&p_app_fiod->transition_fifo, &entry, sizeof(FIO_TRANS_BUFFER));
                                         /*pr_debug("fioman_rx_frame_182:transition:ip=%d state=%d time=%d:fifo@%p=%d, st=%d\n",
                                                 entry.input_point, entry.state, entry.timestamp, &p_app_fiod->transition_fifo,
                                                 kfifo_len(&p_app_fiod->transition_fifo), p_app_fiod->transition_status);*/
@@ -2688,11 +2613,11 @@ fioman_rx_frame_183
 	FIOMSG_RX_FRAME		*p_rx_frame		/* Frame received */
 )
 {
-	/*FIOMAN_SYS_FIOD		*p_sys_fiod;*/	/* For access to System info */
+	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* For access to System info */
 
 	/* Get access to system info */
-	/*p_sys_fiod = (FIOMAN_SYS_FIOD *)p_rx_frame->fioman_context;*/
-	
+	p_sys_fiod = (FIOMAN_SYS_FIOD *)p_rx_frame->fioman_context;
+
 /* TEG DEL */
 /*pr_debug( "UPDATING Frame 183\n" );*/
 /* handle status bits from response frame */

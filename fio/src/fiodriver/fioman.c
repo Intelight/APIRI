@@ -41,6 +41,7 @@ TEG - NO LOCKING IS IN PLACE.  THIS IS NOT AN ISSUE FOR INITIAL DEVELOPMENT
 #include	<linux/time.h>
 #include	<linux/kfifo.h>
 #include	<asm/uaccess.h>		/* User Space Access Definitions */
+#include        <linux/termios.h>
 
 /* Local includes. */
 #include	"fioman.h"			/* FIOMAN Definitions */
@@ -50,6 +51,10 @@ TEG - NO LOCKING IS IN PLACE.  THIS IS NOT AN ISSUE FOR INITIAL DEVELOPMENT
 /* Inlined C files */
 /*#include	"fiomsg.c"*/		/* FIOMSG Code */
 /*#include	"fioframe.c"*/
+#ifdef FAULTMON_GPIO
+#include <linux/gpio.h>
+extern int faultmon_gpio;
+#endif
 
 /*  Definition section.
 -----------------------------------------------------------------------------*/
@@ -58,11 +63,14 @@ FIOMSG_PORT	fio_port_table[ FIO_PORTS_MAX ];
 struct list_head	fioman_fiod_list;
 
 FIO_DEV_HANDLE		fioman_fiod_dev_next;
-
+#ifdef LAZY_CLOSE
+struct list_head        priv_list;
+#endif
 int local_time_offset = 0;
 
 /*  Private API declaration (prototype) section.
 -----------------------------------------------------------------------------*/
+extern int sdlc_kernel_ioctl(void *context, int command, unsigned long parameters);
 int fioman_hm_register( struct file *, unsigned int);
 int fioman_hm_deregister( struct file *);
 int fioman_hm_heartbeat( struct file *);
@@ -193,7 +201,7 @@ fioman_do_disable_fiod
 	fiomsg_port_disable( &p_app_fiod->fiod );
 
 	/* If comm has now been disabled */
-	if ( 0 == fiomsg_port_comm_status( &p_app_fiod->fiod ) )
+	if ( 0 == fiomsg_port_comm_status( p_app_fiod->fiod.port ) )
 	{
 		FIO_IOC_FIOD	fiod;	/* Tmp FIOD for clean up */
 
@@ -231,6 +239,8 @@ fioman_do_dereg_fiod
 )
 {
 	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* Ptr to FIOMAN fiod structure */
+	struct list_head	*p_app_elem;	/* Ptr to app element being examined */
+        FIO_HZ                  new_rate;
 
 	/* See if this FIOD is currently enabled */
 	if ( p_app_fiod->enabled )
@@ -254,7 +264,29 @@ fioman_do_dereg_fiod
 		/* YES, last reference.  Get rid of this list element */
 		list_del_init( &p_sys_fiod->elem );
 		kfree( p_sys_fiod );
-	}
+	} else {
+                /* re-assess the watchdog rate if required */
+                if ((p_sys_fiod->watchdog_output >= 0)
+                        && (p_sys_fiod->watchdog_rate != FIO_HZ_0)) {
+                        new_rate = FIO_HZ_0;
+                        p_app_fiod = NULL;
+                        list_for_each( p_app_elem, &p_sys_fiod->app_fiod_list )
+                        {
+                                /* Get a ptr to this list entry */
+                                p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, sys_elem );
+                                if (p_app_fiod->watchdog_reservation) {
+                                        if (p_app_fiod->watchdog_rate > new_rate) {
+                                                new_rate = p_app_fiod->watchdog_rate;
+                                        }
+                                }
+                        }
+
+                        if (new_rate !=  p_sys_fiod->watchdog_rate) {
+                                p_sys_fiod->watchdog_rate = new_rate;
+                                pr_debug("fioman_do_dereg_fiod: new wd rate %d\n", new_rate);
+                        }
+                }
+        }
 }
 
 /*****************************************************************************/
@@ -969,6 +1001,14 @@ fioman_add_def_fiod_frames
 		case FIOOUT14SIU1:case FIOOUT14SIU2:
 		case FIO332:case FIOTS1:case FIOTS2:
 		{
+#ifdef FAULTMON_GPIO
+                        if (faultmon_gpio != -1) {
+                                if (p_fiod->fiod.fiod == FIOTS2) {
+                                        
+                                        break;
+                                }
+			}
+#endif
 			/* Ready frame 49 for this device */
 			tx_frame = fioman_ready_frame_49( p_fiod );
 
@@ -1191,6 +1231,7 @@ fioman_reg_fiod
 		p_sys_fiod->cmu_config_change_count = 0;
 		p_sys_fiod->watchdog_output = -1;
 		p_sys_fiod->watchdog_state = false;
+                p_sys_fiod->watchdog_rate = FIO_HZ_0;
 		for (i=0; i<128; i++) {
 			/* Indicate invalid frame by default */
 			p_sys_fiod->frame_frequency_table[i] = -1;
@@ -1249,9 +1290,11 @@ fioman_reg_fiod
 	p_app_fiod->cmu_mask = p_sys_fiod->cmu_mask;
 	p_app_fiod->watchdog_reservation = false;
 	p_app_fiod->watchdog_toggle_pending = false;
+        p_app_fiod->watchdog_rate = FIO_HZ_0;
 	p_app_fiod->hm_disabled = false;
 	p_app_fiod->enabled = false;
-        FIOMAN_FIFO_ALLOC(p_app_fiod->transition_fifo, sizeof(FIO_TRANS_BUFFER)*1024, GFP_KERNEL);
+	result = kfifo_alloc(&p_app_fiod->transition_fifo, sizeof(FIO_TRANS_BUFFER)*1024, GFP_KERNEL);
+pr_debug("fioman_reg_fiod: kfifo_alloc@%p size=%d ret=%d\n", &p_app_fiod->transition_fifo, sizeof(FIO_TRANS_BUFFER)*1024,result);
         p_app_fiod->transition_status = FIO_TRANS_SUCCESS;
 	p_app_fiod->p_sys_fiod = p_sys_fiod;
 	list_add_tail( &p_app_fiod->elem, &p_priv->fiod_list );
@@ -1342,7 +1385,7 @@ fioman_enable_fiod
 	}
 
 	/* See if comm is already enabled to port */
-	if ( 0 > ( result = fiomsg_port_comm_status( &p_app_fiod->fiod ) ) )
+	if ( 0 > ( result = fiomsg_port_comm_status( p_app_fiod->fiod.port ) ) )
 	{
 		/* Error with this port */
 		return ( result );
@@ -1482,6 +1525,7 @@ fioman_query_fiod
 	FIO_IOC_QUERY_FIOD	*p_arg	/* Arguments to process */
 )
 {
+	FIOMAN_PRIV_DATA	*p_priv = filp->private_data;	/* Access Apps data */
 	FIOMSG_PORT				*p_port;
 	struct list_head		*p_elem;		/* Ptr to list element */
 	struct list_head		*p_next;		/* Temp for safe loop */
@@ -1710,10 +1754,8 @@ fioman_outputs_set
 		/* Turn off all bits we are allowed to touch */
 		p_app_fiod->outputs_plus[ ii ]  &=~(p_app_fiod->outputs_reserved[ ii ]);
 		p_app_fiod->outputs_minus[ ii ] &=~(p_app_fiod->outputs_reserved[ ii ]);
-                if (!p_priv->transaction_in_progress) {
-                        p_sys_fiod->outputs_plus[ ii ]  &=~(p_app_fiod->outputs_reserved[ ii ]);
-                        p_sys_fiod->outputs_minus[ ii ] &=~(p_app_fiod->outputs_reserved[ ii ]);
-                }
+		p_sys_fiod->outputs_plus[ ii ]  &=~(p_app_fiod->outputs_reserved[ ii ]);
+		p_sys_fiod->outputs_minus[ ii ] &=~(p_app_fiod->outputs_reserved[ ii ]);
 
 		/* Isolate differences from what this APP has reserved */
 		/* Only leave on bits that we want set on and have reserved */
@@ -1723,10 +1765,8 @@ fioman_outputs_set
 		/* Turn on our bits, that we are allowed to turn on */
 		p_app_fiod->outputs_plus[ ii ]  |= plus[ ii ];
 		p_app_fiod->outputs_minus[ ii ] |= minus[ ii ];
-                if (!p_priv->transaction_in_progress) {
-                        p_sys_fiod->outputs_plus[ ii ]  |= plus[ ii ];
-                        p_sys_fiod->outputs_minus[ ii ] |= minus[ ii ];
-                }
+		p_sys_fiod->outputs_plus[ ii ]  |= plus[ ii ];
+		p_sys_fiod->outputs_minus[ ii ] |= minus[ ii ];
 	}
 	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
 pr_debug("fioman_outputs_set: %x %x %x %x %x %x %x %x\n",
@@ -1821,79 +1861,6 @@ pr_debug( "fioman_outputs_get: plus:%x %x %x %x %x %x %x %x %x %x %x %x %x\n",
 }
 
 /*****************************************************************************/
-int fioman_transaction_begin( struct file *filp )
-{
-        FIOMAN_PRIV_DATA *p_priv = filp->private_data;
-
-        if (p_priv->transaction_in_progress)
-                return -EINVAL;
-                
-        p_priv->transaction_in_progress = true;
-
-        return 0;
-}
-
-int fioman_transaction_commit( struct file *filp )
-{
-        FIOMAN_PRIV_DATA *p_priv = filp->private_data;
-	struct list_head *p_app_elem;
-	FIOMAN_APP_FIOD  *p_app_fiod;
-	FIOMAN_SYS_FIOD  *p_sys_fiod;
-	int              ii;
-	unsigned long    flags = 0;
-
-        if ((p_priv == NULL) || (!p_priv->transaction_in_progress))
-                return -EINVAL;
-                
-        /* Write all fiod outputs as one transaction */
-        /* Get each of this app's sys_fiods, and lock */
-        list_for_each( p_app_elem, &p_priv->fiod_list )
-        {
-		/* Get a ptr to this list entry */
-		p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, elem );
-		/* See if this FIOD is currently enabled */
-		if ( p_app_fiod->enabled ) {
-                        p_sys_fiod = p_app_fiod->p_sys_fiod;
-                        /* Obtain lock for the associated sys_fiod */
-                        spin_lock_irqsave(&p_sys_fiod->lock, flags);
-		}
-	}
-        /* Copy from each app_fiod to each sys_fiod */
-        list_for_each( p_app_elem, &p_priv->fiod_list )
-        {
-		/* Get a ptr to this list entry */
-		p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, elem );
-		/* See if this FIOD is currently enabled */
-		if ( p_app_fiod->enabled ) {
-                        p_sys_fiod = p_app_fiod->p_sys_fiod;
-                        /* For each plus / minus byte */
-                        for ( ii = 0; ii < FIO_OUTPUT_POINTS_BYTES; ii++ ) {
-                                /* Turn off all bits we are allowed to touch */
-                                p_sys_fiod->outputs_plus[ ii ]  &=~(p_app_fiod->outputs_reserved[ ii ]);
-                                p_sys_fiod->outputs_plus[ ii ]  |= p_app_fiod->outputs_plus[ ii ];
-                                /* Set any 1 bits (app_fiod outputs already masked against reserved */
-                                p_sys_fiod->outputs_minus[ ii ] &=~(p_app_fiod->outputs_reserved[ ii ]);
-                                p_sys_fiod->outputs_minus[ ii ] |= p_app_fiod->outputs_minus[ ii ];
-                        }
-		}
-	}
-
-        /* Unlock sys_fiods */
-        list_for_each( p_app_elem, &p_priv->fiod_list )
-        {
-		/* Get a ptr to this list entry */
-		p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, elem );
-		/* See if this FIOD is currently enabled */
-		if ( p_app_fiod->enabled ) {
-                        p_sys_fiod = p_app_fiod->p_sys_fiod;
-                        spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
-		}
-	}
-        
-        p_priv->transaction_in_progress = false;
-        
-        return 0;
-}
 
 /*****************************************************************************/
 /*
@@ -2415,13 +2382,25 @@ fioman_ts_fault_monitor_set
 	}
 
 	p_sys_fiod = p_app_fiod->p_sys_fiod;
-	if (p_arg->fms == FIO_TS_FM_ON)
-		p_sys_fiod->fm_state = p_app_fiod->fm_state = FIO_TS_FM_ON;
-	else if (p_arg->fms == FIO_TS_FM_OFF)
+	if (p_arg->fms == FIO_TS_FM_ON) {
+		p_app_fiod->fm_state = FIO_TS_FM_ON;
+                // make sure no other registered app has state FIO_TS_FM_OFF
+                p_sys_fiod->fm_state = FIO_TS_FM_ON;
+	} else if (p_arg->fms == FIO_TS_FM_OFF)
 		p_sys_fiod->fm_state = p_app_fiod->fm_state = FIO_TS_FM_OFF;
 	else
 		return (-EINVAL);
 
+pr_debug("fioman_ts_fault_monitor_set: %d\n", p_sys_fiod->fm_state);
+#ifdef FAULTMON_GPIO
+        if (faultmon_gpio != -1) {
+                if (gpio_cansleep(faultmon_gpio))
+                        gpio_set_value_cansleep(faultmon_gpio, p_sys_fiod->fm_state?1:0);
+                else
+                        gpio_set_value(faultmon_gpio, p_sys_fiod->fm_state?1:0);
+        }
+#endif
+                
 	return 0;
 }
 
@@ -2707,12 +2686,12 @@ fioman_inputs_get
 	int count = 0, err = 0;
 	unsigned long flags;
 
-        /* Adjust byte count to buffer size */
-        count = p_arg->num_data_bytes;
+	/* Adjust byte count to buffer size */
+	count = p_arg->num_data_bytes;
 	if (count <= 0)
 		/* No buffer to copy inputs */
 		return -EINVAL;
-
+                
         if (count > FIO_INPUT_POINTS_BYTES)
                 count = FIO_INPUT_POINTS_BYTES;
 
@@ -2733,7 +2712,7 @@ fioman_inputs_get
 			/* Does this fiod support raw inputs frame? */
 			if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_52] == -1) {
 				/* No, copy raw inputs as only type supported */
-			memcpy(inputs, p_sys_fiod->inputs_raw, count);
+				memcpy(inputs, p_sys_fiod->inputs_raw, count);
                         } else {
 				/* Is the appropriate frame scheduled? */
 				if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_52] > FIO_HZ_0) {
@@ -2774,14 +2753,14 @@ fioman_inputs_get
                 p_sys_fiod->fiod.fiod,
 		inputs[0], inputs[1], inputs[2], inputs[3],
 		inputs[4], inputs[5], inputs[6], inputs[7]);*/
-		
-	/* Copy Kernel Data array to User Space */
-	if (err == 0)
-                if (copy_to_user(p_arg->data, inputs, count))
-                        /* Show error */
-                        err = -EFAULT;
 
-	return err;
+	/* Copy Kernel Data array to User Space */
+	if (copy_to_user(p_arg->data, inputs, count))
+		/* Show error */
+		return ( -EFAULT );
+
+	/* Show success */
+	return 0;
 }
 
 /*****************************************************************************/
@@ -2908,20 +2887,20 @@ This function is used to read response frame data.
 */
 /*****************************************************************************/
 
-int fioman_fiod_frame_read
+int
+fioman_fiod_frame_read
 (
-	struct file              *filp, /* File Pointer */
-	FIO_IOC_FIOD_FRAME_READ  *p_arg /* Arguments to process */
+	struct file					*filp,	/* File Pointer */
+	FIO_IOC_FIOD_FRAME_READ		*p_arg	/* Arguments to process */
 )
 {
-	FIOMAN_PRIV_DATA *p_priv = filp->private_data; /* Access Apps data */
-	FIOMAN_APP_FIOD  *p_app_fiod;                  /* Ptr to app fiod structure */
-	FIOMSG_PORT      *p_port;
-	struct list_head *p_elem;                      /* Ptr to list element */
-	struct list_head *p_next;                      /* Temp for safe loop */
-	FIOMSG_RX_FRAME  *p_rx_frame;                  /* Ptr to rx frame being examined */
-	unsigned int     count = 0;
-        int ret;
+	FIOMAN_PRIV_DATA	*p_priv = filp->private_data;	/* Access Apps data */
+	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
+	FIOMSG_PORT			*p_port;
+	struct list_head	*p_elem;		/* Ptr to list element */
+	struct list_head	*p_next;		/* Temp for safe loop */
+	FIOMSG_RX_FRAME		*p_rx_frame;	/* Ptr to rx frame being examined */
+	unsigned int		count = 0;
 
 	/* Find this APP registration */
 	p_app_fiod = fioman_find_dev( p_priv, p_arg->dev_handle );
@@ -2931,8 +2910,8 @@ int fioman_fiod_frame_read
 		return ( -EINVAL );
 	}
 
-	if ((NULL == p_arg->buf) || (p_arg->timeout < 0))
-		return -EINVAL;
+	if ((NULL == p_arg->buf) || (NULL == p_arg->seq_number))
+		return (-EINVAL);
 
 	/* For each element in the list */
 	p_port = FIOMSG_P_PORT( p_app_fiod->fiod.port );
@@ -2942,27 +2921,23 @@ int fioman_fiod_frame_read
 		p_rx_frame = list_entry( p_elem, FIOMSG_RX_FRAME, elem );
 
 		/* See if current element frame no is what we are looking for */
-		if (FIOMSG_PAYLOAD( p_rx_frame )->frame_no == p_arg->rx_frame) {
-                        if (p_rx_frame->resp == false) {
-                                ret = wait_event_interruptible_timeout(p_port->read_wait,
-                                        (p_rx_frame->resp == true), msecs_to_jiffies(p_arg->timeout));
-                                if (ret == 0)
-                                        return -ETIMEDOUT;
-                        }
-                        count = (p_rx_frame->len < p_arg->count) ? p_rx_frame->len : p_arg->count;
-                        if (copy_to_user(p_arg->buf, FIOMSG_PAYLOAD( p_rx_frame )->frame_info, count )) {
-                                /* Could not copy for some reason */
-                                return ( -EFAULT );
-                        }
-                        /* Update other frame info in response */
-                        if (p_arg->seq_number != NULL)
-                                put_user(p_rx_frame->info.last_seq, p_arg->seq_number);
-                        return (count);
+		if ( (FIOMSG_PAYLOAD( p_rx_frame )->frame_no == p_arg->rx_frame)
+				&& (p_rx_frame->resp == true) )
+		{
+			count = (p_rx_frame->len < p_arg->count) ? p_rx_frame->len : p_arg->count;
+			if (copy_to_user(p_arg->buf, FIOMSG_PAYLOAD( p_rx_frame )->frame_info,
+					count )) {
+				/* Could not copy for some reason */
+				return ( -EFAULT );
+			}
+			/* Update other frame info in response */
+			put_user(p_rx_frame->info.last_seq, p_arg->seq_number);
+			return (count);
 		}
 	}
 
-	/* Show invalid frame number */
-	return (-EINVAL);
+	/* Show success */
+	return (0);
 }
 
 /*****************************************************************************/
@@ -3091,7 +3066,6 @@ fioman_fiod_frame_notify_register
 	FIOMSG_PORT		*p_port;
 	struct list_head	*p_elem;	/* Ptr to list element */
 	struct list_head	*p_next;	/* Temp for safe loop */
-	FIOMSG_TX_FRAME		*p_tx_frame;	/* Ptr to tx frame being examined */
 	FIOMSG_RX_FRAME		*p_rx_frame;	/* Ptr to rx frame being examined */
 
 	/* Find this APP registration */
@@ -3102,36 +3076,23 @@ fioman_fiod_frame_notify_register
 		return (-EINVAL);
 	}
 
+	/* For each element in the list */
 	p_port = FIOMSG_P_PORT( p_app_fiod->fiod.port );
+	list_for_each_safe( p_elem, p_next, &p_port->rx_fiod_list[ p_app_fiod->fiod.fiod ] )
+	{
+		/* Get the response frame for this queue element */
+		p_rx_frame = list_entry( p_elem, FIOMSG_RX_FRAME, elem );
 
-        if (p_arg->rx_frame < 128) {
-                list_for_each_safe( p_elem, p_next, &p_port->tx_queue ) {
-                        /* Get the tx request frame for this queue element */
-                        p_tx_frame = list_entry( p_elem, FIOMSG_TX_FRAME, elem );
-                        /* See if current element frame no is what we are looking for */
-                        if (FIOMSG_PAYLOAD( p_tx_frame )->frame_no == p_arg->rx_frame) {
-                                /* add signal request to queue */
-                                f_setown(filp, current->pid, 1);
-                                filp->f_owner.signum = FIO_SIGIO;
-                                if ((fasync_helper(0, filp, 1, &p_tx_frame->notify_async_queue)) >= 0) {
-                                        return 0;
-                                }
-                        }
-                }
-        } else if (p_arg->rx_frame < 256) { 
-                list_for_each_safe( p_elem, p_next, &p_port->rx_fiod_list[ p_app_fiod->fiod.fiod ] ) {
-                        /* Get the response frame for this queue element */
-                        p_rx_frame = list_entry( p_elem, FIOMSG_RX_FRAME, elem );
-                        /* See if current element frame no is what we are looking for */
-                        if (FIOMSG_PAYLOAD( p_rx_frame )->frame_no == p_arg->rx_frame) {
-                                /* add signal request to queue */
-                                f_setown(filp, current->pid, 1);
-                                filp->f_owner.signum = FIO_SIGIO;
-                                if ((fasync_helper(0, filp, 1, &p_rx_frame->notify_async_queue)) >= 0) {
-                                        return 0;
-                                }
-                        }
-                }
+		/* See if current element frame no is what we are looking for */
+		if (FIOMSG_PAYLOAD( p_rx_frame )->frame_no == p_arg->rx_frame)
+		{
+			/* add signal request to queue */
+			f_setown(filp, current->pid, 1);
+			filp->f_owner.signum = FIO_SIGIO;
+			if ((fasync_helper(0, filp, 1, &p_rx_frame->notify_async_queue)) >= 0) {
+				return 0;
+			}
+		}
 	}
 
 	/* Show no such frame found or system error */
@@ -3156,7 +3117,6 @@ fioman_fiod_frame_notify_deregister
 	FIOMSG_PORT		*p_port;
 	struct list_head	*p_elem;	/* Ptr to list element */
 	struct list_head	*p_next;	/* Temp for safe loop */
-	FIOMSG_TX_FRAME		*p_tx_frame;	/* Ptr to tx frame being examined */
 	FIOMSG_RX_FRAME		*p_rx_frame;	/* Ptr to rx frame being examined */
 
 	/* Find this APP registration */
@@ -3167,30 +3127,20 @@ fioman_fiod_frame_notify_deregister
 		return (-EINVAL);
 	}
 
+	/* For each element in the list */
 	p_port = FIOMSG_P_PORT( p_app_fiod->fiod.port );
+	list_for_each_safe( p_elem, p_next, &p_port->rx_fiod_list[ p_app_fiod->fiod.fiod ] )
+	{
+		/* Get the response frame for this queue element */
+		p_rx_frame = list_entry( p_elem, FIOMSG_RX_FRAME, elem );
 
-        if (p_arg->rx_frame < 128) {
-                list_for_each_safe( p_elem, p_next, &p_port->tx_queue ) {
-                        /* Get the tx request frame for this queue element */
-                        p_tx_frame = list_entry( p_elem, FIOMSG_TX_FRAME, elem );
-                        /* See if current element frame no is what we are looking for */
-                        if (FIOMSG_PAYLOAD( p_tx_frame )->frame_no == p_arg->rx_frame) {
-                                /* remove signal request from queue */
-                                fasync_helper(0, filp, 0, &p_tx_frame->notify_async_queue);
-                                return 0;
-                        }
-                }
-        } else if (p_arg->rx_frame < 256) { 
-                list_for_each_safe( p_elem, p_next, &p_port->rx_fiod_list[ p_app_fiod->fiod.fiod ] ) {
-                        /* Get the response frame for this queue element */
-                        p_rx_frame = list_entry( p_elem, FIOMSG_RX_FRAME, elem );
-                        /* See if current element frame no is what we are looking for */
-                        if (FIOMSG_PAYLOAD( p_rx_frame )->frame_no == p_arg->rx_frame) {
-                                /* remove signal request from queue */
-                                fasync_helper(0, filp, 0, &p_rx_frame->notify_async_queue);
-                                return 0;
-                        }
-                }
+		/* See if current element frame no is what we are looking for */
+		if (FIOMSG_PAYLOAD( p_rx_frame )->frame_no == p_arg->rx_frame)
+		{
+			/* remove signal request from queue */
+			fasync_helper(0, filp, 0, &p_rx_frame->notify_async_queue);
+			return 0;
+		}
 	}
 
 	/* Show no such frame found or system error */
@@ -3206,18 +3156,17 @@ This function is used to query a notification.
 int
 fioman_query_frame_notify_status
 (
-	struct file               *filp, /* File Pointer */
-	FIO_IOC_QUERY_NOTIFY_INFO *p_arg /* Arguments to process */
+	struct file			*filp,	/* File Pointer */
+	FIO_IOC_QUERY_NOTIFY_INFO	*p_arg	/* Arguments to process */
 )
 {
-	FIOMAN_PRIV_DATA *p_priv = filp->private_data; /* Access Apps data */
-        FIO_NOTIFY_INFO info;
+	FIOMAN_PRIV_DATA	*p_priv = filp->private_data;	/* Access Apps data */
+	FIOMAN_APP_FIOD		*p_app_fiod = NULL;	/* Ptr to app fiod structure */
 
-        /* Is this app registered to notify? */
-        if ((FIOMAN_FIFO_GET(p_priv->frame_notification_fifo, &info, sizeof(FIO_NOTIFY_INFO)) != sizeof(FIO_NOTIFY_INFO))
-                || copy_to_user(p_arg->notify_info, &info, sizeof(FIO_NOTIFY_INFO)))
-                        return -1;
-	return 0;
+	/* check each app_fiod for notification list */
+	
+	/* Show no such frame found or system error */
+	return (-EINVAL);
 }
 
 /*****************************************************************************/
@@ -3240,7 +3189,7 @@ int fioman_ts1_volt_monitor_set
 		return ( -EINVAL );
 	}
 
-	if (p_app_fiod->fiod.fiod != FIOTS1) {
+	if ((p_app_fiod->fiod.fiod != FIOTS1) && (p_app_fiod->fiod.fiod != FIOTS2)) {
 		return (-EINVAL);
 	}
 
@@ -3274,7 +3223,7 @@ int fioman_ts1_volt_monitor_get
 		return ( -EINVAL );
 	}
 
-	if (p_app_fiod->fiod.fiod != FIOTS1) {
+	if ((p_app_fiod->fiod.fiod != FIOTS1) && (p_app_fiod->fiod.fiod != FIOTS2)) {
 		return (-EINVAL);
 	}
 	if (p_arg->vms == NULL)
@@ -3292,6 +3241,37 @@ int fioman_ts1_volt_monitor_get
 	}
 
 	return 0;
+}
+
+int fioman_ts2_port1_state
+(
+	struct file		*filp,		/* File Pointer */
+	FIO_IOC_TS2_PORT1_STATE	*p_arg
+)
+{
+	FIOMAN_PRIV_DATA	*p_priv = filp->private_data;	/* Access Apps data */
+        FIO_PORT                port = p_arg->port;
+        FIOMSG_PORT             *p_port;
+        int status;
+        int retval = -1;
+        
+        /* Make sure serial port is opened */
+        pr_debug("fioman_ts2_port1_state: check if port %d is open\n", port); 
+	if (fiomsg_port_comm_status(port) > 0) {
+                pr_debug("fioman_ts2_port1_state: port %d is open\n", port); 
+		p_port = &fio_port_table[port];
+                /* get modem pin status from port */
+                if ((retval = sdlc_kernel_ioctl(p_port->context, TIOCMGET, (unsigned long)&status)) == 0) {
+                        pr_debug("fioman_ts2_port1_state: port %d status=%x\n", port, status); 
+                        /* check DCD status for port1 disable state */
+                        if (status & TIOCM_CAR)
+                                put_user(FIO_TS2_PORT1_ENABLED, p_arg->state);
+                        else
+                                put_user(FIO_TS2_PORT1_DISABLED, p_arg->state);
+                }
+	}
+
+	return retval;
 }
 
 int fioman_frame_schedule_set
@@ -3499,7 +3479,7 @@ pr_debug("fioman_inputs_filter_set: item:%d ip:%d lead:%d trail:%d invalid\n",
 
 	/* If any sys_fiod filter values have changed, we must schedule frame #51 */
 	if (update_fiod) {
-		/* Ready frame 51 for this device */
+                /* Ready frame 51 for this device */
                 if (!fioman_frame_is_scheduled(p_sys_fiod, FIOMAN_FRAME_NO_51))
                         return fioman_add_frame(FIOMAN_FRAME_NO_51, p_sys_fiod);
 	}
@@ -3608,7 +3588,7 @@ int fioman_inputs_trans_set
 
 	/* If any sys_fiod input config values have changed, we must schedule frame #51 */
 	if (update_fiod) {
-		/* Ready frame 51 for this device */
+                /* Ready frame 51 for this device */
                 if (!fioman_frame_is_scheduled(p_sys_fiod, FIOMAN_FRAME_NO_51)) 
                         return fioman_add_frame(FIOMAN_FRAME_NO_51, p_sys_fiod);
 	}
@@ -3665,8 +3645,7 @@ int fioman_inputs_trans_read
 	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
 	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* Ptr to FIOMAN fiod structure */
         FIO_TRANS_STATUS        status;
-        FIO_TRANS_BUFFER        buffer;
-	int			i = 0, count = 0;
+	int			i = 0, count = 0, copied;
         unsigned long flags;
 	
 	/* Find this APP registration */
@@ -3683,17 +3662,17 @@ int fioman_inputs_trans_read
 
 	/* TBD: return app-specific transition buffer entries */
 	spin_lock_irqsave(&p_sys_fiod->lock, flags);
-	count = FIOMAN_FIFO_LEN(p_app_fiod->transition_fifo)/sizeof(FIO_TRANS_BUFFER);
+	count = kfifo_len(&p_app_fiod->transition_fifo)/sizeof(FIO_TRANS_BUFFER);
         status = p_app_fiod->transition_status;
         /* Reset status so reported only once per occurrence */
         p_app_fiod->transition_status = FIO_TRANS_SUCCESS;
 	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
-	if (p_arg->count < count)
+        if (p_arg->count < count)
 		count = p_arg->count;
-pr_debug("fioman_inputs_trans_read: reading %d entries from fifo@%p len=%d\n", count, &p_app_fiod->transition_fifo, FIOMAN_FIFO_LEN(p_app_fiod->transition_fifo));
+pr_debug("fioman_inputs_trans_read: reading %d entries from fifo@%p len=%d\n", count, &p_app_fiod->transition_fifo, kfifo_len(&p_app_fiod->transition_fifo));
 	for (i=0; i<count; i++) {
-                if ((FIOMAN_FIFO_GET(p_app_fiod->transition_fifo, &buffer, sizeof(FIO_TRANS_BUFFER)) != sizeof(FIO_TRANS_BUFFER))
-                        || copy_to_user(&p_arg->trans_buf[i], &buffer, sizeof(FIO_TRANS_BUFFER)))
+		kfifo_to_user(&p_app_fiod->transition_fifo, &p_arg->trans_buf[i], sizeof(FIO_TRANS_BUFFER), &copied);
+                if (copied != sizeof(FIO_TRANS_BUFFER))
                         return -1;
 	}
         put_user(status, p_arg->status);
@@ -3754,6 +3733,7 @@ fioman_wd_deregister
 	}
 
 	p_app_fiod->watchdog_reservation = false;
+        p_app_fiod->watchdog_rate = FIO_HZ_0;
 	return 0;
 }
 
@@ -3799,7 +3779,6 @@ int fioman_wd_reservation_set
 	return 0;
 }
 
-
 int fioman_wd_reservation_get
 (
 	struct file		*filp,
@@ -3823,6 +3802,59 @@ int fioman_wd_reservation_get
 		return -ENODEV;
 		
 	return put_user(p_sys_fiod->watchdog_output, p_arg->output);
+}
+
+int fioman_wd_rate_set
+(
+	struct file		        *filp,
+	FIO_IOC_FIOD_WD_RATE_SET        *p_arg
+)
+{
+	FIOMAN_PRIV_DATA	*p_priv = filp->private_data;	/* Access Apps data */
+	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
+	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* Ptr to FIOMAN fiod structure */
+	struct list_head	*p_app_elem;	/* Ptr to app element being examined */
+        FIO_HZ                  new_rate;
+
+	/* Find this APP registration */
+	p_app_fiod = fioman_find_dev( p_priv, p_arg->dev_handle );
+	/* See if we found the dev_handle */
+	if ( NULL == p_app_fiod ) {
+		/* No, return error */
+		return -EINVAL;
+	}
+
+	/* app not registered for watchdog or health monitor service */
+	if ((p_app_fiod->watchdog_reservation == false) || (p_priv->hm_timeout == 0))
+		return -EACCES;
+
+	/* invalid arg or output number out-of-range */
+	if ((p_arg == NULL) || (p_arg->rate < FIO_HZ_0) || (p_arg->rate >= FIO_HZ_MAX))
+		return -EINVAL;
+	
+        p_app_fiod->watchdog_rate = new_rate = p_arg->rate;
+        
+	p_sys_fiod = p_app_fiod->p_sys_fiod;
+
+        /* Check for new highest wd rate of all apps */
+	p_app_fiod = NULL;
+	list_for_each( p_app_elem, &p_sys_fiod->app_fiod_list )
+	{
+		/* Get a ptr to this list entry */
+		p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, sys_elem );
+		if (p_app_fiod->watchdog_reservation) {
+                        if (p_app_fiod->watchdog_rate > new_rate) {
+                                new_rate = p_app_fiod->watchdog_rate;
+                        }
+                }
+	}
+
+	if (new_rate > p_sys_fiod->watchdog_rate) {
+                p_sys_fiod->watchdog_rate = new_rate;
+                pr_debug("fioman_wd_rate_set: new rate %d\n", new_rate);
+        }
+	
+	return 0;
 }
 
 /*****************************************************************************/
@@ -3908,12 +3940,15 @@ pr_debug( "fioman_wd_heartbeat: plus:%x %x %x %x %x %x %x %x %x %x %x %x %x\n",
 	return 0;
 }
 
-
 void hm_timeout(struct work_struct *work)
 {
         FIOMAN_PRIV_DATA        *p_priv = hm_timeout_priv;
 	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
 	struct list_head 	*p_app_elem;	/* Ptr to app list element */
+        struct list_head        *p_app_next;
+        struct list_head        *p_priv_elem;
+        struct list_head        *p_priv_next;
+        FIOMAN_PRIV_DATA        *p_priv_old;
 
         pr_debug("hm_timeout: disable failed app @%p\n", p_priv);
 
@@ -3932,6 +3967,30 @@ void hm_timeout(struct work_struct *work)
                 p_app_fiod->hm_disabled = true;
 	}
 
+#ifdef LAZY_CLOSE
+        /* search for this app priv_data in lazy close list */
+        list_for_each_safe(p_priv_elem, p_priv_next, &priv_list) {
+                p_priv_old = list_entry(p_priv_elem, FIOMAN_PRIV_DATA, elem);
+                if (p_priv_old->hm_fault) {
+                        /* found in lazy close list and hm timeout */
+                        /* Deregister every FIOD still registered */
+                        list_for_each_safe( p_app_elem, p_app_next, &p_priv_old->fiod_list )
+                        {
+                                /* Get a ptr to this list entry */
+                                p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, elem );
+
+                                /* Do the deregister for this FIOD */
+                                fioman_do_dereg_fiod( p_app_fiod );
+                        }
+                        /* Delete this list entry */
+                        list_del_init( p_priv_elem );
+
+                        /* Free the memory */
+                        kfree( p_priv_old );
+                        return;
+                }
+        }
+#endif
         
         return;
 }
@@ -3944,15 +4003,15 @@ This function is the health monitor service timeout handler.
 void hm_timer_alarm( unsigned long arg )
 {
 	FIOMAN_PRIV_DATA 	*p_priv = (FIOMAN_PRIV_DATA *)arg;	/* Access Apps data */
-	
+
 	/* app hm timer has expired */
 	p_priv->hm_fault = true;
 	/* disable all app_fiods */
         /* can't perform from irq context, so schedule work */
         hm_timeout_priv = p_priv;
         schedule_work(&hm_timeout_work);
-	
-	return;
+        
+        return;        
 }
 
 /*****************************************************************************/
@@ -3980,7 +4039,7 @@ fioman_hm_register
 	} else {
 		/* use deregister function to cancel timer */
 		fioman_hm_deregister(filp);
-	}	
+	}
         pr_debug("fioman_hm_register: %s app %p\n", timeout?"enabling":"disabling", p_priv);
 	return 0;
 }
@@ -4028,9 +4087,9 @@ fioman_hm_heartbeat
 	if (p_priv->hm_timeout == 0)
                 return -EACCES;        /* not registered for hb service */
                 
-		mod_timer(&p_priv->hm_timer,
-			jiffies + msecs_to_jiffies(p_priv->hm_timeout*100));
-        pr_debug("fioman_hm_heartbeat: app %p mod_timer now=%ld expire=%ld\n", p_priv, jiffies, msecs_to_jiffies(p_priv->hm_timeout*100));
+	mod_timer(&p_priv->hm_timer,
+		jiffies + msecs_to_jiffies(p_priv->hm_timeout*100));
+        pr_debug("fioman_hm_heartbeat: app %p mod_timer now=%d expire=%d\n", p_priv, jiffies, msecs_to_jiffies(p_priv->hm_timeout*100));
 
 	return 0;
 }
@@ -4080,10 +4139,9 @@ fioman_set_local_time_offset
 )
 {
 	if (get_user(local_time_offset, p_arg) != 0) {
-		printk(KERN_ALERT "failed to get local_time_offset\n");
 		return -1;
 	} else {
-		printk(KERN_ALERT "local_time_offset=%d\n", local_time_offset);
+		pr_debug(KERN_ALERT "fioman_set_local_time_offset=%d\n", local_time_offset);
 		return 0;
 	}
 }
@@ -4108,7 +4166,40 @@ fioman_open
 {
 	FIOMAN_PRIV_DATA	*p_priv;	/* Ptr to private App data */
 
-	/* Allocate our App private data */
+#ifdef LAZY_CLOSE
+        // Release the resources of all closed apps private data
+	struct list_head	*p_app_elem;	/* Ptr to app element being examined */
+	struct list_head	*p_app_next;	/* Temp Ptr to next for loop */
+	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
+        struct list_head        *p_priv_elem;
+        struct list_head        *p_priv_next;
+        FIOMAN_PRIV_DATA        *p_priv_old;
+        
+        p_priv_elem = NULL;
+        list_for_each_safe( p_priv_elem, p_priv_next, &priv_list)
+        {
+		/* Get a ptr to this list entry */
+		p_priv_old = list_entry( p_priv_elem, FIOMAN_PRIV_DATA, elem );
+
+                if (timer_pending(&p_priv_old->hm_timer))
+                        del_timer(&p_priv_old->hm_timer);
+                        
+                /* Deregister every FIOD still registered */
+                list_for_each_safe( p_app_elem, p_app_next, &p_priv_old->fiod_list )
+                {
+                        /* Get a ptr to this list entry */
+                        p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, elem );
+
+                        /* Do the deregister for this FIOD */
+                        fioman_do_dereg_fiod( p_app_fiod );
+                }
+		/* Delete this entry */
+		list_del_init( p_priv_elem );
+
+		/* Free the memory */
+		kfree( p_priv_old );
+        }
+#endif
 	/* Allocate our new App private data */
 	if ( ! ( p_priv = (FIOMAN_PRIV_DATA *)kmalloc( sizeof( FIOMAN_PRIV_DATA ), GFP_KERNEL ) ) )
 	{
@@ -4120,12 +4211,12 @@ fioman_open
 	INIT_LIST_HEAD( &p_priv->fiod_list );
 	
 	/* Initialize hm timer for this app */
+pr_debug("fioman_open() app priv @%p\n", p_priv);
         init_timer(&p_priv->hm_timer);
 	p_priv->hm_timer.function = hm_timer_alarm;
 	p_priv->hm_timer.data = (unsigned long)p_priv;
         p_priv->hm_timeout = 0;
         p_priv->hm_fault = false;
-        p_priv->transaction_in_progress = false;
 
 	/* Save ptr so that fio_api calls have access */
 	filp->private_data = p_priv;
@@ -4158,10 +4249,18 @@ fioman_release
 
 	/* Get the APPs private data */
 	p_priv = (FIOMAN_PRIV_DATA *)filp->private_data;
+#ifdef LAZY_CLOSE
+        if (p_priv->hm_timeout != 0) {
+                /* detach and save this priv data struct until hm timeout */
+                list_add_tail(&p_priv->elem, &priv_list);
+                
+                return 0;
+        } 
+#endif
 pr_debug("fioman_release: cancel hm timer for app %p\n", p_priv);
         if (timer_pending(&p_priv->hm_timer))
                 del_timer(&p_priv->hm_timer);
-
+                
 	/* Deregister every FIOD still registered */
 	list_for_each_safe( p_app_elem, p_next, &p_priv->fiod_list )
 	{
@@ -4652,6 +4751,17 @@ fioman_ioctl
 			break;
 		}
 
+		/* Request for TS2 port1 disable state */
+		case FIOMAN_IOC_TS2_PORT1_STATE:
+		{
+			FIO_IOC_TS2_PORT1_STATE *p_arg = (FIO_IOC_TS2_PORT1_STATE *)arg;
+
+			printk( KERN_ALERT "fioman_ioctl TS2_PORT1_STATE\n" );
+			rt_code = fioman_ts2_port1_state( filp, p_arg );
+
+			break;
+		}
+
 		/* Set Frame Schedule list */
 		case FIOMAN_IOC_FIOD_FRAME_SCHD_SET:
 		{
@@ -4784,6 +4894,18 @@ fioman_ioctl
 			break;
 		}
 
+		/* Set watchdog output toggle rate */
+		case FIOMAN_IOC_WD_RATE_SET:
+		{
+			FIO_IOC_FIOD_WD_RATE_SET *p_arg = (FIO_IOC_FIOD_WD_RATE_SET *)arg;
+
+			/*printk( KERN_ALERT "fioman_ioctl WD_RATE_SET\n" );*/
+
+			rt_code = fioman_wd_rate_set( filp, p_arg );
+
+			break;
+		}
+
 		/* Request toggle of watchdog output */
 		case FIOMAN_IOC_WD_HB:
 		{
@@ -4852,14 +4974,6 @@ fioman_ioctl
 			break;
 		}
 
-                case FIOMAN_IOC_TRANSACTION_BEGIN:
-                        rt_code = fioman_transaction_begin( filp );
-                        break;
-                
-                case FIOMAN_IOC_TRANSACTION_COMMIT:
-                        rt_code = fioman_transaction_commit( filp );
-                        break;
-                        
 		/* Undefined command */
 		default:
 		{
@@ -4901,6 +5015,9 @@ fioman_init
 
         INIT_WORK(&hm_timeout_work, hm_timeout);
         
+#ifdef LAZY_CLOSE
+        INIT_LIST_HEAD( &priv_list );
+#endif
 }
 
 /*****************************************************************************/
@@ -4921,6 +5038,39 @@ fioman_exit
 	struct list_head	*p_next;		/* Temp for loop */
 	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* Items to kill */
 
+#ifdef LAZY_CLOSE
+	struct list_head	*p_app_elem;	/* Ptr to app element being examined */
+        struct list_head        *p_app_next;
+	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
+        struct list_head        *p_priv_elem;
+        struct list_head        *p_priv_next;
+        FIOMAN_PRIV_DATA        *p_priv_old;
+        
+        // Release the resources of priv_list
+        list_for_each_safe( p_priv_elem, p_priv_next, &priv_list)
+        {
+		/* Get a ptr to this list entry */
+		p_priv_old = list_entry( p_priv_elem, FIOMAN_PRIV_DATA, elem );
+
+                if (timer_pending(&p_priv_old->hm_timer))
+                        del_timer(&p_priv_old->hm_timer);
+                        
+                /* Deregister every FIOD still registered */
+                list_for_each_safe( p_app_elem, p_app_next, &p_priv_old->fiod_list )
+                {
+                        /* Get a ptr to this list entry */
+                        p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, elem );
+
+                        /* Do the deregister for this FIOD */
+                        fioman_do_dereg_fiod( p_app_fiod );
+                }
+		/* Delete this entry */
+		list_del_init( p_priv_elem );
+
+		/* Free the memory */
+		kfree( p_priv_old );
+        }
+#endif
 	/* Clean up the FIOMAN FIOD list -- should be empty (this is safety) */
 	list_for_each_safe( p_sys_elem, p_next, &fioman_fiod_list )
 	{

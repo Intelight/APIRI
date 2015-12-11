@@ -42,7 +42,6 @@ kernel module.
 #include	<linux/fs.h>		/* File structure definitions */
 #include	<linux/cdev.h>		/* Character driver definitions */
 #include	<linux/device.h>
-#include        <linux/version.h>
 
 /* Local includes. */
 #include	"fiodriver.h"				/* FIO Driver Definitions */
@@ -55,6 +54,12 @@ kernel module.
 -----------------------------------------------------------------------------*/
 /* Inlined C files */
 /*#include	"fioman.c"*/		/* FIOMAN Code */
+#ifdef FAULTMON_GPIO
+#include <linux/gpio.h>
+int faultmon_gpio = -1;
+module_param(faultmon_gpio, int, 0644);
+MODULE_PARM_DESC(faultmon_gpio, "Linux GPIO number for Fault Monitor output");
+#endif
 
 dev_t			fio_dev;		/* Major / Minor */
 struct cdev		fio_cdev;		/* character device */
@@ -70,18 +75,14 @@ struct file_operations	fio_fops;
 /*  Private API implementation section.
 -----------------------------------------------------------------------------*/
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,31)
 static struct class *fio_class;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0)
+
 static char *fio_devnode(struct device *dev, mode_t *mode)
-#else
-static char *fio_devnode(struct device *dev, umode_t *mode)
-#endif
 {
 	return kasprintf(GFP_KERNEL, "%s", dev_name(dev));
 	//return "fio";
 }
-#endif
+
 /*****************************************************************************/
 /*
 This function initializes the FIO Driver module.
@@ -118,7 +119,6 @@ fio_init( void )
 		goto error_region;
 	}
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,31)
 	/* Create a class for this device and add the device */
 	fio_class = class_create(THIS_MODULE, "fio");
 	if (IS_ERR(fio_class)) {
@@ -129,7 +129,28 @@ fio_init( void )
 	}
 	fio_class->devnode = fio_devnode;
 	device_create(fio_class, NULL, fio_dev, NULL, "fio");
+
+#ifdef FAULTMON_GPIO
+        if (faultmon_gpio >= 0) {
+                if (!gpio_is_valid(faultmon_gpio)) {
+                        faultmon_gpio = -1;
+                        printk( KERN_ALERT "fiodriver: fiomon_gpio not valid\n" );
+                } else {
+                        if (gpio_request(faultmon_gpio, "fiodriver") != 0) {
+                                faultmon_gpio = -1;
+                                printk( KERN_ALERT "fiodriver: fiomon_gpio request failed\n" );
+                        } else {
+                                gpio_direction_output(faultmon_gpio, 0);	/* initially OFF */
+                                if (gpio_cansleep(faultmon_gpio))
+                                        gpio_set_value_cansleep(faultmon_gpio, 0);
+                                else
+                                        gpio_set_value(faultmon_gpio, 0);
+                                printk( KERN_ALERT "fiodriver: using fiomon_gpio %d\n", faultmon_gpio);
+                        }
+                }
+	}
 #endif
+
 	/* DRIVER IS LIVE */
 
 	printk( KERN_ALERT "FIO Driver Loaded\n" );
@@ -154,10 +175,14 @@ This function cleans up the FIO Driver Module for unloading
 static void __exit
 fio_exit( void )
 {
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,31)
+#ifdef FAULTMON_GPIO
+        if (faultmon_gpio >= 0) {
+                gpio_free(faultmon_gpio);
+        }
+#endif
 	device_destroy(fio_class, fio_dev);
 	class_destroy(fio_class);
-#endif
+
 	/* Make character driver unavailable */
 	cdev_del( &fio_cdev );
 

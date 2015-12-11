@@ -45,24 +45,11 @@ This file contains all definitions for the FIOMAN.
 
 /*  Definition section.
 -----------------------------------------------------------------------------*/
-/*  Module public structure/enum definition.*/
-#include        <linux/version.h>
+#define LAZY_CLOSE 1
+#define FAULTMON_GPIO 1
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-typedef struct kfifo *FIOMAN_FIFO;
-#define FIOMAN_FIFO_ALLOC(a,b,c)        ({a = kfifo_alloc(b,c,NULL);})
-#define FIOMAN_FIFO_PUT(a,b,c)          __kfifo_put(a,(unsigned char *)b,c)
-#define FIOMAN_FIFO_GET(a,b,c)          kfifo_get(a,(unsigned char *)b,c)
-#define FIOMAN_FIFO_LEN(a)              __kfifo_len(a)
-#define FIOMAN_FIFO_AVAIL(a)            (a->size - (a->in - a->out))
-#else
-typedef struct kfifo FIOMAN_FIFO;
-#define FIOMAN_FIFO_ALLOC(a,b,c)        kfifo_alloc(&a,b,c)
-#define FIOMAN_FIFO_PUT(a,b,c)          kfifo_in(&a,b,c)
-#define FIOMAN_FIFO_GET(a,b,c)          kfifo_out(&a,b,c)
-#define FIOMAN_FIFO_LEN(a)              kfifo_len(&a)
-#define FIOMAN_FIFO_AVAIL(a)            kfifo_avail(&a)
-#endif
+/*  Module public structure/enum definition.*/
+
 
 /*  Global section.
 -----------------------------------------------------------------------------*/
@@ -70,12 +57,13 @@ typedef struct kfifo FIOMAN_FIFO;
 /* Structure stored in *filp of App information */
 struct fioman_priv_data
 {
-	struct list_head        fiod_list;               /* List of Apps FIODS */
-	struct timer_list       hm_timer;                /* Health Monitor timer */
-	unsigned int            hm_timeout;              /* Health Monitor timeout period */
-	bool                    hm_fault;                /* Health Monitor fault/timeout indication */
-        FIOMAN_FIFO             frame_notification_fifo; /* fifo of FIO_NOTIFY_INFO entries */
-        bool                    transaction_in_progress; /* Buffer app_fiods outputs if true */ 
+	struct list_head	fiod_list;	/* List of Apps FIODS */
+	struct timer_list	hm_timer;	/* Health Monitor timer */
+	unsigned int		hm_timeout;	/* Health Monitor timeout period */
+	bool			hm_fault;	/* Health Monitor fault/timeout indication */
+#ifdef LAZY_CLOSE
+        struct list_head        elem;           /* Allow structure in list */
+#endif
 };
 typedef	struct	fioman_priv_data	FIOMAN_PRIV_DATA;
 
@@ -123,6 +111,8 @@ struct fioman_sys_fiod
 	u32	cmu_config_change_count;
 	int 	watchdog_output;
 	bool	watchdog_state;
+        FIO_HZ  watchdog_rate;
+        int     watchdog_countdown;
 	u32	success_rx;					/* Cumulative count of successful responses */
 	u32	error_rx;					/* Cumulative count of response errors */
 };
@@ -150,7 +140,7 @@ struct fioman_app_fiod
 	u8	input_filters_leading[ FIO_INPUT_POINTS_BYTES * 8 ];
 	u8	input_filters_trailing[ FIO_INPUT_POINTS_BYTES * 8 ];
 	u8	input_transition_map[ FIO_INPUT_POINTS_BYTES ];
-	FIOMAN_FIFO	transition_fifo;
+	struct kfifo	transition_fifo;
         FIO_TRANS_STATUS        transition_status;
 
 	u8	channels_reserved[ FIO_CHANNEL_BYTES ];
@@ -162,6 +152,7 @@ struct fioman_app_fiod
 	FIO_CMU_DC_MASK		cmu_mask;
 	bool			watchdog_reservation;
 	bool			watchdog_toggle_pending;
+        FIO_HZ                  watchdog_rate;
 	bool			hm_disabled;
 };
 typedef	struct	fioman_app_fiod	FIOMAN_APP_FIOD;
