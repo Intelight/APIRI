@@ -430,6 +430,7 @@ void viewport_listener( char *filepath )
 						tcflush(fd,TCIFLUSH);
 						check_screen_size( fd );
 						set_focus(has_focus);
+						ping = false;
 						break;
 					} else if( ch == CHAR_ESC ) {
 						// get as much of the escape sequence as we can recognize
