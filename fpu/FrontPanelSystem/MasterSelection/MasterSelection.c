@@ -62,7 +62,7 @@ void alldone( int arg )
 static char *regtab[APP_OPENS];
 #define MAX_MENU_ROWS 8
 static char menu[MAX_MENU_ROWS][41];
-int g_rows = 8, g_cols = 40;
+int g_rows = 16, g_cols = 40;
 static char pad[16];
 
 int xprintat( int fd, int r, int c, const char *fmt, ... )
