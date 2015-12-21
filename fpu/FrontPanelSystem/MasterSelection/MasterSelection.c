@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <string.h>
 #include <ctype.h>
+#include <poll.h>
 
 #include <fpui.h>
 #include <front_panel.h>
@@ -46,6 +47,7 @@ extern int xprintf( int fd, const char * fmt, ... );
 void window_handler( int arg )
 {
 	fprintf( stderr, "SIGWINCH\n" );
+	// see if window size changed
 }
 
 
@@ -151,22 +153,27 @@ void display( int fd, int row_index )
 
 void get_screen_size(int fd)
 {
-	char buf[1024];
-	read_packet *rp = (read_packet *)buf;
-	char type = 0;
 	int count = 0;
+	char sbuf[160];
+	read_packet *rp = (read_packet *)sbuf;
+	char panel_type = '\0';
 
-	// Query panel type: A (4 lines); B (8 lines); D (16 lines)
-	fpui_write_string( fd, "\x1b[c" );
-	// response should be in read_packet format
-	if( (count = read(fd, buf, sizeof(buf))) > 0 ) {
-		if (rp->command == DATA) {
-			if (sscanf((const char *)rp->data, "\x1b[%cR", &type) == 1) {
-				if (toupper(type) == 'A')
-					g_rows = 4;
-				else if (toupper(type) == 'D')
-					g_rows = 16;
+	//Query panel type: A (4 lines); B (8 lines); D (16 lines)
+	fpui_write_string(fd, "\x1b[c");
+	if ((count = read(fd, sbuf, sizeof(sbuf))) > sizeof(read_packet)) {
+		if (sscanf(rp->data, "\x1b[%cR", &panel_type) == 1) {
+			if (panel_type == 'A')
+				g_rows = 4;
+			else if (panel_type == 'B')
+				g_rows = 8;
+			else if (panel_type == 'D')
+				g_rows = 16;
+			else {
+				printf("MS: get_screen_size() error\n");
+				return;
 			}
+			g_cols = 40;
+			printf("MS: get_screen_size() rows=%d\n", g_rows);
 		}
 	}
 }
@@ -203,6 +210,7 @@ int main( int argc, char * argv[] )
 	bool default_cmd = false;
 	int default_win = -1;
 	char default_app[16] = "";
+	struct pollfd	ufds;
 
 	signal( SIGHUP, alldone );
 	signal( SIGWINCH, window_handler );
@@ -255,13 +263,28 @@ int main( int argc, char * argv[] )
 	// Use default key mappings
 
 	for( ;; ) {
-		printf( "MS: reading on msi=%d\n", msi );
-		if (((i = read(msi, buf, sizeof(buf))) < 0)
-				|| (i < sizeof(read_packet)) ) {
-			perror( argv[0] );
+		ufds.fd = msi;
+		ufds.events = POLLIN;
+		ufds.revents = 0;
+		switch (poll(&ufds, 1, 1000)) {
+		case -1:
+			perror(argv[0]);
 			exit( 30 );
-		}
-		switch( rp->command ) {
+			break;
+		case 0:
+			// character wait timeout
+			// clear any pending sequence
+			default_cmd = false;
+			break;
+		default:
+		{
+			printf( "MS: reading on msi=%d\n", msi );
+			if (((i = read(msi, buf, sizeof(buf))) < 0)
+				|| (i < sizeof(read_packet)) ) {
+				perror( argv[0] );
+				exit( 30 );
+			}
+			switch( rp->command ) {
 			case NOOP:
 				printf("%s: NOOP packet from %d to %d\n", argv[0], rp->from, rp->to );
                                 break;
@@ -327,26 +350,25 @@ int main( int argc, char * argv[] )
 							break;
 						default:	// [0..F] to select an application screen
 						{
+							int win;
 							fprintf( stderr, "MS: keycode 0x%2.2x\n", rp->data[i]);
-							if (default_cmd) {
-								if (isxdigit(rp->data[i])) {
-									default_win = isdigit(rp->data[i])?
-                                                                                (rp->data[i]-0x30):
-                                                                                (toupper(rp->data[i])-55);
-									break;
-								}
-							} else if(isxdigit(rp->data[i])) {
-								int win = isdigit(rp->data[i])?
-                                                                        (rp->data[i]-0x30):
-                                                                        (toupper(rp->data[i])-55);
+							if (isxdigit(rp->data[i])) {
+								win = isdigit(rp->data[i])?
+									(rp->data[i]-0x30):
+									(toupper(rp->data[i])-55);
 								if (regtab[win] != NULL) {
-									fprintf( stderr, "MS: Setting focus to process %x\n", win);
-									ioctl( msi, FP_IOC_SET_FOCUS, &win );
+									if (default_cmd) {
+										default_win = win;
+									} else {
+										fprintf( stderr, "MS: Setting focus to process %x\n", win);
+										ioctl( msi, FP_IOC_SET_FOCUS, &win );
+									}
 									break;
 								}
 							}
 							// invalid selection
 							fprintf( stderr, "MS: invalid keypress\n" );
+							default_cmd = false;
 							// Issue "bell" alert to front panel
 							char bel = 0x7;
 							write(msi, &bel, 1);						
@@ -389,6 +411,8 @@ int main( int argc, char * argv[] )
 				exit( 99 );
                                 break;
 
+			}
+		}
 		}
 	}
 }

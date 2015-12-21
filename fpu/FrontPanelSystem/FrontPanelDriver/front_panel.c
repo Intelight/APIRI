@@ -1269,7 +1269,8 @@ list_packet *send_packet( int command, int from, int to, const char __user *buf,
 	// separate out signaling commands from the rest and handle them
 	switch( rptr->command ) {
 		case SIGNAL_ALL:
-			for( i = 0; i < FP_MAX_DEVS; i++ ) {
+			pr_debug("%s: SIGNAL_ALL packet\n", __func__);
+			for( i = 0; i < FPM_DEV; i++ ) {
 				// if the pid is set, send SIGWINCH to it.
 				if( fp_devtab[i].pid > 1 ) {
 					send_signal( fp_devtab[i].pid, SIGWINCH );
@@ -1278,6 +1279,7 @@ list_packet *send_packet( int command, int from, int to, const char __user *buf,
 			kfree( lptr );
 			break;
 		case SIGNAL:
+			pr_debug("%s: SIGNAL packet\n", __func__);
 			if( fp_devtab[rptr->to].pid > 0 ) {
 				send_signal( fp_devtab[rptr->to].pid, SIGWINCH );
 			}

@@ -827,8 +827,9 @@ void other( display_t *disp, int type, int args[] )
 		case INQUIRE_TYPE: {
 			char screen_type = 'B';
 			get_screen_type(&screen_type);
-			DBG( "%s(%d): TYPE %c\n", __func__, term, screen_type );
 			sprintf( buf, "\x1b[%cR", screen_type );
+			/*DBG*/printf( "%s(%d): TYPE %c (%02x %02x %02x %02x)\n", __func__, term, screen_type,
+				buf[0], buf[1], buf[2], buf[3]);
 			routing_return( term, buf, NULL );
 			break;
                 case INQUIRE_FOCUS: {
@@ -1151,7 +1152,10 @@ void load_screen( int fd, int term )
 	if (!is_active( term ))
 		return;
 
-	DBG("%s: fd=%d, term=%d (%d:%d)\n", __func__, fd, term, disp->screen.rows, disp->screen.columns );
+	disp->screen.rows = screen_YY;
+	disp->screen.columns = screen_XX;
+	
+	/*DBG*/printf("%s: fd=%d, term=%d (%d:%d)\n", __func__, fd, term, disp->screen.rows, disp->screen.columns );
 
 	// clear screen
 	xprintf( fd, ESC "[2J" );
