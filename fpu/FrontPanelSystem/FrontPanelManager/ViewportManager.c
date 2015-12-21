@@ -388,11 +388,11 @@ void viewport_listener( char *filepath )
 								display_present = false;
 								/*DBG*/printf( "%s: Display has been disconnected.\n", __func__ );
 								// TODO we need to signal the change
-								routing_send_signal(FP_MAX_DEVS);
+								//routing_send_signal(FP_MAX_DEVS);
 							}
 						}
                                                 // Send ping (now enquire AUX switch state)
-						write( fd, ESC "[An", 4 );
+						write( fd, ESC "[6n", 4 );
 						ping = true;
 					} else if( timeout == SHORT_TIMEOUT ) {
 						//
@@ -504,7 +504,7 @@ void viewport_listener( char *filepath )
 										// TODO we need to signal the change
 										display_present = true;
 										check_screen_size( fd );
-										routing_send_signal(FP_MAX_DEVS); //signal all
+										//routing_send_signal(FP_MAX_DEVS); //signal all
 										set_focus(has_focus);
 									}
 									ping = false;
@@ -535,6 +535,18 @@ void viewport_listener( char *filepath )
 								break;
 							case CUR_POS:	// the response to a 'get cursor position' inquiry.
 								DBG( "%s: CURSOR POS sequence\n", __func__ );
+								if( ping ) {
+									if( !display_present ) {
+										/*DBG*/printf( "%s: Display has been reconnected (ping).\n", __func__ );
+										// TODO we need to signal the change
+										display_present = true;
+										check_screen_size( fd );
+										//routing_send_signal(FP_MAX_DEVS); //signal all
+										set_focus(has_focus);
+									}
+									ping = false;
+									break;
+								}
 								routing_return( has_focus, NULL, buf );
 								break;
 							default:
