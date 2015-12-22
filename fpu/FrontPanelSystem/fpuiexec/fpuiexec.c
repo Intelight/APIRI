@@ -35,24 +35,16 @@
 volatile sig_atomic_t sig_flag = 0;
 static char pid_file[100];
 static pid_t child_pid = 0;
+static int restart = 0;
 
-void clean_up()
+void signal_handler(int sig)
 {
+	restart = 0;
 	if(child_pid != 0)
 	{
 		kill(child_pid, SIGTERM);
 		child_pid=0;
 	}
-	if(strlen(pid_file) > 0)
-	{
-		remove(pid_file);
-	}
-}
-
-void signal_handler(int sig)
-{
-	clean_up();
-	exit(EXIT_FAILURE);
 }
 
 void print_usage()
@@ -60,7 +52,6 @@ void print_usage()
 	printf("Usage: fpuiexec [OPTIONS] program\n");
 	printf("  -n name                   application name for FrontPanelManager\n");
 	printf("  -p file                   process id file\n");
-	printf("  -d sec                    delay time in sec before starting program\n");
 	printf("  -r                        restart program if it exits\n");
 	printf("\n");
 }
@@ -69,13 +60,10 @@ int main( int argc, char * argv[] )
 {
 	int opt;
 	int fpi;
-	int restart=0;
 	char name[50];
 	char pid_buffer[50];
-	char delay_buffer[50];
-	char* program = 0;
+	char* program;
 	FILE* pid_file_handle = 0;
-	long int delay;
 	char* end;
 
 	signal(SIGINT, signal_handler);
@@ -83,7 +71,6 @@ int main( int argc, char * argv[] )
 
 	name[0]=0;
 	pid_file[0]=0;
-	delay_buffer[0]=0;
 	sprintf(pid_buffer, "%d\n", getpid());
 
 	while ((opt = getopt(argc, argv, "rn:p:d:")) != -1) 
@@ -92,8 +79,7 @@ int main( int argc, char * argv[] )
 		{
 			case 'r': restart=1; break;
 			case 'n': strcpy(name, optarg); break;	
-			case 'p': strcpy(pid_file, optarg); break;
-			case 'd': strcpy(delay_buffer, optarg); break;		
+			case 'p': strcpy(pid_file, optarg); break;	
 			default:
 				print_usage();
 				exit(EXIT_FAILURE);
@@ -119,19 +105,6 @@ int main( int argc, char * argv[] )
 			fclose(pid_file_handle);
 		}
 	}
-
-	if(delay_buffer[0] != 0)
-	{
-		delay = strtol(delay_buffer,&end,10);
-		sleep(delay);
-	}
-	
-	fpi = fpui_open( O_RDWR, name);
-	if( fpi <= 0 ) 
-	{
-		fprintf( stderr, "open /dev/fpi failed (%s)\n", strerror( errno ) );
-		exit( 1 );
-	}
 	
 	do
 	{
@@ -139,30 +112,42 @@ int main( int argc, char * argv[] )
 		if (child_pid == 0) 
 		{
 			// Child process
-			// Redirect standard input
-			close(STDIN_FILENO);
+			fpi = fpui_open( O_RDWR, name);
+			if( fpi <= 0 ) 
+			{
+				fprintf( stderr, "open /dev/fpi failed (%s)\n", strerror( errno ) );
+				exit( 1 );
+			}
+			// Redirect stdio, stdout, stderr
 			dup2(fpi, STDIN_FILENO);
-
-			// Redirect standard output
-			close(STDOUT_FILENO);
 			dup2(fpi, STDOUT_FILENO);
-
-			// Redirect standard error
-			close(STDERR_FILENO);
 			dup2(fpi, STDERR_FILENO);
 
-			execvp(program, &argv[2]);
+			// close fpi after handles have been duped
+			fpui_close(fpi);
+
+			execvp(program, &argv[optind]);
 		}
 		else if(child_pid > 0)
 		{
 			int childExitStatus;
 			pid_t ws = waitpid( child_pid, &childExitStatus, 0);
 			child_pid=0;
+			if(childExitStatus == 0)
+			{
+				restart = 0;
+			}
+			else if(restart)
+			{
+				sleep(5);
+			}
 		}
 	} while(restart);
 	
-	fpui_close(fpi);
-	clean_up();
+	if(strlen(pid_file) > 0)
+	{
+		remove(pid_file);
+	}
 	return 0;
 }
 	
