@@ -45,6 +45,7 @@ module_param(timesrc, charp, 0644);
 MODULE_PARM_DESC(timesrc, "ATC Time Source Name");
 
 #define RTC_UPDATE_DELAY 500000000
+#define RTC_SYNC_INTERVAL 600
 
 /* Info for each registered platform device */
 struct atc_tod_data {
@@ -275,6 +276,7 @@ static void atc_tod_rtc_write(struct work_struct *work)
 	struct rtc_device *rtc;
 	struct timespec ts;
 	struct rtc_time tm = {0};
+	long delay;
 	ktime_t timeout;
 
 	rtc = rtc_class_open("rtc0");
@@ -284,15 +286,20 @@ static void atc_tod_rtc_write(struct work_struct *work)
 	}
 
 	getnstimeofday(&ts);
+	delay = RTC_UPDATE_DELAY - ts.tv_nsec;
+	if(delay <= 0) {
+		delay += 1000000000;
+		ts.tv_sec += 1;
+	}
 	rtc_time_to_tm(ts.tv_sec, &tm);
 	__set_current_state(TASK_UNINTERRUPTIBLE);
-	timeout = ktime_set(0, 1000000000 - RTC_UPDATE_DELAY - ts.tv_nsec);
+	timeout = ktime_set(0, delay);
 	schedule_hrtimeout_range(&timeout, 1000, HRTIMER_MODE_REL);
 
 	if (rtc_set_time(rtc, &tm))
 		pr_err("rtc_set_time error\n");
 	else
-		pr_info("setting rtc clock to "
+		pr_debug("setting rtc clock to "
 				"%d-%02d-%02d %02d:%02d:%02d UTC\n",
 				tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 				tm.tm_hour, tm.tm_min, tm.tm_sec);
@@ -312,11 +319,14 @@ static irqreturn_t atc_tod_irq_handler(int irq, void *data)
 		schedule_work(&dd->rtc_read_work);
 
 	if(dd->linesync_sync) {
-		if(dd->count >= dd->frequency * 2) {
+		if(dd->count % (dd->frequency * 2) == 0) {
 			/* Get the PPS time stamp first */
 			pps_get_ts(&ts);
 
-			dd->count = 0;
+			if(dd->count >= (dd->frequency * 2 * RTC_SYNC_INTERVAL)) {
+				dd->count = 0;
+				schedule_work(&dd->rtc_write_work);
+			}
 
 			/* The new timestamp must be 1 second ahead with no more than 200ms error */
 			delta = 0;
