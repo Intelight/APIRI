@@ -41,7 +41,7 @@ setSource() {
 			;;
 		EXTERNAL1)
 			echo "setting timesrc to EXTERNAL1(3)"
-			port=$(awk -v pattern=sp$2 '$0 ~ pattern {print $1}' /etc/mdev.conf)
+			port=$(cat /etc/mdev.conf | grep -w sp$2 | awk '{print $1}')
 			sed -i "1s|^|refclock SOCK /var/run/chrony.$port.sock refid GPSD\n|" /etc/chrony.conf
 			sed -i "/export DEVICES=/c\export DEVICES=\"/dev/$port\"" /etc/gpsd.conf	
 			;;
