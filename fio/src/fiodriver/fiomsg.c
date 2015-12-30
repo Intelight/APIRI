@@ -187,7 +187,7 @@ fiomsg_tx_remove_fiod
 		p_tx_elem = list_entry( p_elem, FIOMSG_TX_FRAME, elem );
 
 		/* See if current element is destined for FIOD interested in */
-		if ( p_tx_elem->fiod.fiod == p_fiod->fiod )
+		if ( (p_tx_elem->fiod.fiod == p_fiod->fiod) || (p_fiod->fiod == FIOD_ALL) )
 		{
 			/* YES, then remove this element */
 			list_del_init( p_elem );
@@ -615,8 +615,7 @@ fiomsg_rx_set_port_timer
 		p_port->tx_use_pend = 1 - p_port->tx_use_pend;
 
 		/* Show which response frame we are expecting */
-		p_rx_pend->frame_no = FIOMSG_RX_FRAME_NO(
-									FIOMSG_PAYLOAD( p_tx_frame )->frame_no );
+		p_rx_pend->frame_no = FIOMSG_RX_FRAME_NO(FIOMSG_PAYLOAD( p_tx_frame )->frame_no);
 		p_rx_pend->fiod = p_tx_frame->fiod;
 
 		p_timer->function = fiomsg_rx_task;
@@ -625,7 +624,7 @@ fiomsg_rx_set_port_timer
 		FIOMSG_TIMER_START(p_timer,next_when);
 
 		/* TEG DEL */
-		/*pr_debug( KERN_ALERT "Setting RX timer, expiry %lu\n", p_timer->expires );*/
+		pr_debug( KERN_ALERT "Setting RX timer, frame %d, nxt_pend %d expiry %llu\n", p_rx_pend->frame_no, p_port->tx_use_pend, next_when.tv64 );
 		/* TEG DEL */
 	}
 
@@ -680,12 +679,14 @@ fiomsg_rx_add_frame
 			{
 				/* Add the new frame at this point */
 				list_add_tail( &p_frame->elem, p_elem );
+                                pr_debug("rx_add_frame(%d)\n", FIOMSG_PAYLOAD( p_frame )->frame_no);
 				return;
 			}
 		}
 	}
 	/* New element belongs at end of list */
 	list_add_tail( &p_frame->elem, &p_port->rx_fiod_list[ p_frame->fiod ] );
+        pr_debug("rx_add_frame(%d) @tail\n", FIOMSG_PAYLOAD( p_frame )->frame_no);
 }
 
 /*****************************************************************************/
@@ -787,6 +788,7 @@ fiomsg_rx_remove_fiod
 	FIOMSG_RX_FRAME		*p_rx_elem;	/* Ptr to tx frame being examined */
 	FIOMSG_PORT			*p_port;	/* Port of Request Queue */
 
+        pr_debug("fiomsg_rx_remove_fiod fiod(%d)\n", p_fiod->fiod);
 	/* Get port to work on */
 	p_port = FIOMSG_P_PORT( p_fiod->port );
 
@@ -889,6 +891,7 @@ pr_debug("fiomsg_port_enable: opening port %d\n", p_port->port);
 			/* Port was not opened */
 			return ( -ENODEV );
 		}
+                p_port->tx_use_pend = p_port->rx_use_pend = 0;
 		/* Set the start timestamp for this port */
 		p_port->start_time = FIOMSG_CURRENT_TIME;
 		printk( KERN_ALERT "FIOMSG Task port(%d) -> opened (%llu)\n", p_port->port, p_port->start_time.tv64 );
@@ -1300,10 +1303,8 @@ fiomsg_timer_callback_rtn fiomsg_rx_task( fiomsg_timer_callback_arg arg )
 	p_rx_pend = &p_port->rx_pend[ p_port->rx_use_pend ];
 	p_port->rx_use_pend = 1 - p_port->rx_use_pend;
 
-	/* TEG DEL */
-	/*pr_debug( KERN_ALERT "RX frame task! jiffies(%lu); pend: fiod(%d), frame_no(%d)\n",
-			FIOMSG_CURRENT_TIME, p_rx_pend->fiod, p_rx_pend->frame_no );*/
-	/* TEG DEL */
+	pr_debug("RX frame task! jiffies(%llu); pend: fiod(%d), frame_no(%d)\n",
+			FIOMSG_CURRENT_TIME.tv64, p_rx_pend->fiod.fiod, p_rx_pend->frame_no );
 
 	/* Read frame if present */
 	while ( fiomsg_rx_read_frame( p_port ) )
@@ -1322,13 +1323,13 @@ fiomsg_timer_callback_rtn fiomsg_rx_task( fiomsg_timer_callback_arg arg )
 			FIOMSG_TIMER_CALLBACK_RTN;
 		}
 		/* Not the frame we expected, therefore ignore this frame */
-		pr_debug( KERN_ALERT "Dumping RX frame(%llu) #%d, expected #%d\n", FIOMSG_CURRENT_TIME.tv64,
-				rx_frame->frame_no, p_rx_pend->frame_no);
+		pr_debug("Dumping RX frame(%llu) #%d, expected #%d pend=%d\n", FIOMSG_CURRENT_TIME.tv64,
+				rx_frame->frame_no, p_rx_pend->frame_no, p_port->rx_use_pend);
 		frames_read++;
 	}
 	if( frames_read == 0 ) {
 		/* No frame to read, show no response */
-		pr_debug( KERN_ALERT "No RX frame read!(%llu), expected #%d\n", FIOMSG_CURRENT_TIME.tv64,
+		pr_debug("No RX frame read!(%llu), expected #%d\n", FIOMSG_CURRENT_TIME.tv64,
 				p_rx_pend->frame_no);
 		/* Update rx error count */
 		fiomsg_rx_update_frame( p_port, p_rx_pend, false );

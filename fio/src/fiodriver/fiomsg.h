@@ -79,7 +79,7 @@ typedef struct hrtimer			FIOMSG_TIMER;
 #define FIOMSG_TIMER_CANCEL(a)		hrtimer_cancel(a)
 typedef enum hrtimer_restart		fiomsg_timer_callback_rtn;
 typedef struct hrtimer*			fiomsg_timer_callback_arg;
-#define FIOMSG_TIMER_CALLBACK_RTN	return(0)
+#define FIOMSG_TIMER_CALLBACK_RTN	return(HRTIMER_NORESTART)
 #else
 typedef	unsigned long			FIOMSG_TIME;
 typedef struct timer_list		FIOMSG_TIMER;
