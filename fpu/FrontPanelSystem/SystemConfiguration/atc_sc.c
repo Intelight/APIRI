@@ -132,7 +132,7 @@ int ipow(int base, int exp)
 		parse_cmd(cmd_buffer, &crt_cmd);
 		process_cmd(&crt_cmd);
 	}
-	
+	close(display_data.file_descr);
  }
  
  /* Initialize one unmodifiable field line, defined by a pointer to a screen and the line number */ 
@@ -1121,6 +1121,7 @@ fpui_set_cursor(display_data.file_descr, true);
 					eth_enable = false;
 				}
 				pCrt_field->internal_data = pCrt_field->temp_data;
+				pCrt_field->type = kModifiable;
 				eth_if_changed = true;
 			}
 			break;
@@ -1132,6 +1133,7 @@ fpui_set_cursor(display_data.file_descr, true);
 				pCrt_field = &pCrt_line->fields[1 + (2*i)];
 				if ((pCrt_field->type == kModified) || (pCrt_field->type == kModified2)) {
 					pCrt_field->internal_data = pCrt_field->temp_data;
+					pCrt_field->type = kModifiable;
 					break;
 				}
 			}
@@ -1237,6 +1239,7 @@ fpui_set_cursor(display_data.file_descr, true);
 						pCrt_line->fields[ETH_NSADDR3_FIELD].temp_data,
 						pCrt_line->fields[ETH_NSADDR4_FIELD].temp_data);
 					pCrt_field->internal_data = pCrt_field->temp_data;
+					pCrt_field->type = kModifiable;
 					eth_dns_changed = true;
 					break; /* from loop */
 				}
@@ -1300,7 +1303,7 @@ fpui_set_cursor(display_data.file_descr, true);
 		}
 
 		if (eth_if_changed || eth_dns_changed) {
-			/*printf("%s\n",sh_cmd);*/
+			//printf("%s\n",sh_cmd);
 			system(sh_cmd);
 			// stop network interface
 			sprintf(sh_cmd, "/sbin/ifdown %s", eth_name);
