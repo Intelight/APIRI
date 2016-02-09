@@ -119,12 +119,22 @@ This file contains all definitions for the FIOMAN.
 #define FIOMAN_FRAME_NO_21			(21)
 #define FIOMAN_FRAME_NO_22			(22)
 #define FIOMAN_FRAME_NO_23			(23)
+#define FIOMAN_FRAME_NO_24			(24)
+#define FIOMAN_FRAME_NO_25			(25)
+#define FIOMAN_FRAME_NO_26			(26)
+#define FIOMAN_FRAME_NO_27			(27)
 #define FIOMAN_FRAME_NO_20_SIZE		(3)
+#define FIOMAN_FRAME_NO_24_SIZE		(4)
 #define FIOMAN_FRAME_NO_148			(148)
 #define FIOMAN_FRAME_NO_149			(149)
 #define FIOMAN_FRAME_NO_150			(150)
 #define FIOMAN_FRAME_NO_151			(151)
+#define FIOMAN_FRAME_NO_152			(152)
+#define FIOMAN_FRAME_NO_153			(153)
+#define FIOMAN_FRAME_NO_154			(154)
+#define FIOMAN_FRAME_NO_155			(155)
 #define FIOMAN_FRAME_NO_148_SIZE	(37)
+#define FIOMAN_FRAME_NO_152_SIZE	(17)
 
 /*  Global section.
 -----------------------------------------------------------------------------*/
@@ -152,8 +162,10 @@ void *fioman_ready_frame_10_11( FIOMAN_SYS_FIOD*, int );
 void *fioman_ready_frame_12_13(	FIOMAN_SYS_FIOD*, int );
 void *fioman_ready_frame_18( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_20_23( FIOMAN_SYS_FIOD*, u8 );
+void *fioman_ready_frame_24_27( FIOMAN_SYS_FIOD*, u8 );
 void *fioman_ready_frame_138_141( FIOMAN_SYS_FIOD*, u8 );
 void *fioman_ready_frame_148_151( FIOMAN_SYS_FIOD*, u8 );
+void *fioman_ready_frame_152_155( FIOMAN_SYS_FIOD*, u8 );
 void *fioman_ready_frame_177( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_179( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_180( FIOMAN_SYS_FIOD* );
