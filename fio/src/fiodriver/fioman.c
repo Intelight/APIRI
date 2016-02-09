@@ -450,7 +450,7 @@ fioman_add_frame
                 if (frame_no >= FIOMAN_FRAME_NO_20 && frame_no <= FIOMAN_FRAME_NO_23) {
                         txframe = fioman_ready_frame_20_23(p_sys_fiod, frame_no);
                         rxframe = fioman_ready_frame_148_151(p_sys_fiod, frame_no + 128);
-                } else if (frame_no >= FIOMAN_FRAME_NO_23 && frame_no <= FIOMAN_FRAME_NO_24) {
+                } else if (frame_no >= FIOMAN_FRAME_NO_23 && frame_no <= FIOMAN_FRAME_NO_27) {
                         txframe = fioman_ready_frame_24_27(p_sys_fiod, frame_no);
                         rxframe = fioman_ready_frame_152_155(p_sys_fiod, frame_no + 128);
 		}
