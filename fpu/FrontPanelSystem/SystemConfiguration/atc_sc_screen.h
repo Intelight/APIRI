@@ -175,11 +175,11 @@
 
 // Definitions for the API INFO screen
 #define HEADER_LINE_0_APIV	"            API INFORMATION             "
-#define LINE_0_APIV		"API Version:                            "
-#define LINE_1_APIV		"API Driver Version:                     "
-#define LINE_2_APIV		"API Version:                            "
-#define LINE_3_APIV		"API Driver Version:                     "
-#define LINE_4_APIV		"API Version:                            "
+#define LINE_0_APIV		"FPUI Version: n/a                       "
+#define LINE_1_APIV		"FPUI LKM Version: n/a                   "
+#define LINE_2_APIV		"FIO Version: n/a                        "
+#define LINE_3_APIV		"FIO LKM Version: n/a                    "
+#define LINE_4_APIV		"TOD Version: n/a                        "
 #define LINE_5_APIV		"                                        "
 #define FOOTER_LINE_APIV 	"[UP/DN ARROW] [APPLY-ENT]  [QUIT-**NEXT]"
 

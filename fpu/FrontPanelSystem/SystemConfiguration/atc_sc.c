@@ -744,18 +744,17 @@ void init_remaining_lines(sc_internal_screen* pScreen, int startLine)
 	init_one_field_line(pScreen, 4, LINE_4_APIV, false);
 	init_one_field_line(pScreen, 5, LINE_5_APIV, false);
 	init_remaining_lines(pScreen, 6);
-	byteCount = snprintf(buffer, 27, "%-27.27s", fpui_apiver(display_data.file_descr,1));
-	memcpy(&pScreen->screen_lines[0].line[13], buffer, byteCount);
-	byteCount = snprintf(buffer, 20, "%-20.20s", fpui_apiver(display_data.file_descr,2));
-	memcpy((char *)&pScreen->screen_lines[1].line[20], buffer, byteCount);
+	byteCount = snprintf(buffer, 26, "%-26.26s", fpui_apiver(display_data.file_descr,1));
+	memcpy(&pScreen->screen_lines[0].line[14], buffer, byteCount);
+	byteCount = snprintf(buffer, 22, "%-22.22s", fpui_apiver(display_data.file_descr,2));
+	memcpy((char *)&pScreen->screen_lines[1].line[18], buffer, byteCount);
 	// Connect to fio api to get version info
 	FIO_APP_HANDLE fiod = -1;
-	if ((fiod = fio_register()) != -1) { 
+	if ((fiod = fio_register()) >= 0) { 
 		byteCount = snprintf(buffer, 27, "%-27.27s", fio_apiver(fiod, FIO_VERSION_LIBRARY));
 		memcpy(&pScreen->screen_lines[2].line[13], buffer, byteCount);
-		byteCount = snprintf(buffer, 20, "%-20.20s", fio_apiver(fiod, FIO_VERSION_LKM));
-		printf("fio version: %s\n", fio_apiver(fiod, FIO_VERSION_LKM));
-		memcpy((char *)&pScreen->screen_lines[3].line[20], buffer, byteCount);
+		byteCount = snprintf(buffer, 23, "%-23.23s", fio_apiver(fiod, FIO_VERSION_LKM));
+		memcpy((char *)&pScreen->screen_lines[3].line[17], buffer, byteCount);
 		fio_deregister(fiod);
 	}
 	byteCount = snprintf(buffer, 27, "%-27.27s", tod_apiver());
