@@ -96,7 +96,7 @@ This file contains all definitions for the FIOMAN.
 #define FIOMAN_FRAME_NO_128			(128)
 #define FIOMAN_FRAME_NO_128_SIZE	(3)
 #define FIOMAN_FRAME_NO_129			(129)
-#define FIOMAN_FRAME_NO_129_SIZE	(14)
+#define FIOMAN_FRAME_NO_129_SIZE	(13)
 #define FIOMAN_FRAME_NO_131			(131)
 #define FIOMAN_FRAME_NO_131_SIZE	(23)
 
@@ -133,8 +133,8 @@ This file contains all definitions for the FIOMAN.
 #define FIOMAN_FRAME_NO_153			(153)
 #define FIOMAN_FRAME_NO_154			(154)
 #define FIOMAN_FRAME_NO_155			(155)
-#define FIOMAN_FRAME_NO_148_SIZE	(37)
-#define FIOMAN_FRAME_NO_152_SIZE	(17)
+#define FIOMAN_FRAME_NO_148_SIZE	(39)
+#define FIOMAN_FRAME_NO_152_SIZE	(19)
 
 /*  Global section.
 -----------------------------------------------------------------------------*/
