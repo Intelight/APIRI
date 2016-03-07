@@ -51,15 +51,15 @@
 #define CHAR_ESC '\x1b'
 
 
-void set_focus( int);
-int get_focus( void );
-void send_to_current( char );
-void viewport_listener( char * );
+void set_focus(int);
+int get_focus(void);
+void send_to_current(char);
+void viewport_listener(char *);
+int parse_escape_seq(int, char *, int);
 
 
 int panel_fd = -1;
 bool display_present = false;
-
 extern void vt_lock( int );
 extern void load_screen( int, int );
 extern void vt_unlock( int );
@@ -152,9 +152,11 @@ bool check_screen_size( int fd )
 		sprintf( outbuf, "%c[6n", CHAR_ESC );
 		write( fd, outbuf, strlen(outbuf) );
 		if(poll( &ufds, 1, 200) == 1) {
-			if( (i = read( fd, inbuf, 40 )) > 0 ) {
-				inbuf[i] = '\0';
-				i = sscanf( inbuf, ESC "[%d;%dR", &row, &col ); // read cursor position
+			if (((i = read(fd, inbuf, 1)) == 1)
+				&& (inbuf[0] == CHAR_ESC)) {
+				if (parse_escape_seq(fd, inbuf, sizeof(inbuf)) != CUR_POS)
+					return false;
+				sscanf(inbuf, ESC "[%d;%dR", &row, &col); // read cursor position
 			}
 		} else {
 			return false;
@@ -243,13 +245,13 @@ void viewport_cleanup( void *arg )
 }
 
 
-void parse_escape_seq( int fd, char *buf, int len )
+int parse_escape_seq(int fd, char *buf, int len)
 {
-	int  i  = 0;
+	int i = 0;
 	char ch = ' ';
 	struct pollfd ufds;
-	ufds.fd      = fd;
-	ufds.events  = POLLIN;
+	ufds.fd = fd;
+	ufds.events = POLLIN;
 	ufds.revents = 0;
 
 	// we have already received the escape character
@@ -300,6 +302,13 @@ void parse_escape_seq( int fd, char *buf, int len )
 	buf[i] = '\0';
 out:
 	DBG("%s: %02x %02x %02x %02x\n", __func__, buf[0], buf[1], buf[2], buf[3]);
+	// compare the sequence to the list of special strings
+	for(i = 0; i<SPECIAL_STRING_SIZE; i++) {
+		if(regexec(&special_string[i].preg, buf, 0, NULL, 0) == REG_NOERROR) {
+			break;
+		}
+	}
+	return i;
 }
 
 
@@ -329,7 +338,7 @@ void viewport_listener( char *filepath )
 	DBG( "%s: Starting on port %s\n", __func__, filepath );
 
 	// prepare the regular expression pattern buffers for the special strings.
-	for( i = 0; i < SPECIAL_STRING_SIZE; i++ ) {
+	for(i = 0; i < SPECIAL_STRING_SIZE; i++) {
 		if( (errcode = regcomp( &special_string[i].preg, special_string[i].pattern, REG_EXTENDED | REG_NOSUB )) != REG_NOERROR ) {
 			char errbuf[128];
 			regerror( errcode, &special_string[i].preg, errbuf, sizeof( errbuf ) );
@@ -434,14 +443,8 @@ void viewport_listener( char *filepath )
 						break;
 					} else if( ch == CHAR_ESC ) {
 						// get as much of the escape sequence as we can recognize
-						parse_escape_seq( fd, buf, sizeof( buf ) );
-
-						// compare the sequence to the list of special strings
-						for( i = 0; i < SPECIAL_STRING_SIZE; i++ ) {
-							if( (errcode = regexec( &special_string[i].preg, buf, 0, NULL, 0 )) == REG_NOERROR ) {
-								break;
-							}
-						}
+						if ((i = parse_escape_seq(fd, buf, sizeof(buf))) < 0)
+							break;
 
 						// finally handle the special string, or pass any other string up thre channel.
 						switch( i ) {
