@@ -48,7 +48,7 @@
 //#define CONFIG_FP_PROC_FS
 // #define CONFIG_FP_DEV_FS
 
-#define FP_VERSION_STR "Intelight, 1.0, 2.17"
+#define FP_VERSION_STR "Intelight, 1.1, 2.17"
 unsigned long fp_version = 0x00000001L;
 
 
