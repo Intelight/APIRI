@@ -295,7 +295,7 @@ int parse_escape_seq(int fd, char *buf, int len)
 		break;
 	}
 
-	for( i = 3; (ch != 'R') && (i < (len-1)); i++ ) {
+	for( i = 3; (ch != 'R') && (ch != '~') && (i < (len-1)); i++ ) {
 		read(fd,&ch,1);
 		buf[i] = ch;
 	}
