@@ -312,7 +312,20 @@ static irqreturn_t atc_tod_irq_handler(int irq, void *data)
 	struct atc_tod_data *dd = data;
 	struct pps_event_time ts;
 	long delta;
-
+	static unsigned long last_ts = 0;
+	unsigned long new_ts, interval;
+        
+	// Check that this is a genuine linesync irq of approx. 1/(2*pl_freq)
+	new_ts = jiffies;
+	if (dd->count) {
+		interval = ((new_ts - last_ts)*1000)/HZ;
+		if (interval < (900/(2*pl_freq))) {
+			pr_debug("Linesync short irq interval (%ld) skipped\n", interval);
+			return IRQ_HANDLED;
+		}
+	}
+	last_ts = new_ts;
+        
 	dd->count++;
 
 	if (unlikely(dd->rtc_loaded == false))
