@@ -45,7 +45,7 @@ module_param(timesrc, charp, 0644);
 MODULE_PARM_DESC(timesrc, "ATC Time Source Name");
 
 #define RTC_UPDATE_DELAY 500000000
-#define RTC_SYNC_INTERVAL 600
+#define RTC_SYNC_INTERVAL 16
 
 /* Info for each registered platform device */
 struct atc_tod_data {
