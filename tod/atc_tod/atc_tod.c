@@ -35,6 +35,7 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
+#include <linux/sched.h>
 
 static int pl_freq = 60;
 module_param(pl_freq, int, 0644);
