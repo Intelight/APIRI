@@ -148,7 +148,7 @@ typedef enum { POWER_UP, INQUIRE_AUX, INQUIRE_HEATER, INQUIRE_TYPE, INQUIRE_FOCU
 
 
 // #define REGEX_INIT { NULL, 0, 0, 0, NULL, NULL, 0, 0, 0, 0, 0, 0, 0, 0 }
-#define REGEX_INIT { .buffer = NULL }
+#define REGEX_INIT { }
 
 /*
 	NOTES:
@@ -892,6 +892,7 @@ int parse_arg_list( char *s, int args[], int argc )
 // by 's'. Undefined or unsupported sequences are simply skipped
 // over. The number of characters parsed out of the string is returned.
 //
+static int parse_escape_request_init = 0;
 int parse_escape_request( display_t *disp, char *s )
 {
 	int i;
@@ -904,9 +905,10 @@ int parse_escape_request( display_t *disp, char *s )
 
 	// make sure the command table is initialized.
 	// TODO this should be moved to an init routine
-	if( cmd_tab[0].preg.buffer == NULL ) {
+	if( parse_escape_request_init == 0 ) {
+		parse_escape_request_init = 1;
 		for( i = 0; i < CMD_TAB_SIZE; i++ ) {
-			if( (errcode = regcomp( &cmd_tab[i].preg, cmd_tab[i].pattern, REG_EXTENDED )) != REG_NOERROR ) {
+			if( (errcode = regcomp( &cmd_tab[i].preg, cmd_tab[i].pattern, REG_EXTENDED )) != 0 ) {
 				regerror( errcode, &cmd_tab[i].preg, errbuf, sizeof( errbuf ));
 				DBG( "%s: regcomp failed at cmd_tab[%d] (%s)\n", __func__, i, errbuf );
 			}
@@ -914,7 +916,7 @@ int parse_escape_request( display_t *disp, char *s )
 	}
 
 	for( i = 0; i < CMD_TAB_SIZE; i++ ) {
-		if( (errcode = regexec( &cmd_tab[i].preg, s, 2, pmatch, 0)) == REG_NOERROR ) {
+		if( (errcode = regexec( &cmd_tab[i].preg, s, 2, pmatch, 0)) == 0 ) {
 			// pmatch[0].rm_so == byte offset of first character in 's' that matches pattern.
 			// pmatch[0].rm_eo == byte offset of last character in 's' that matches pattern.
 			DBG( "%s: match on cmd_tab[%d] @%d for %d = <ESC>%s\n", __func__, i, pmatch[0].rm_so, pmatch[0].rm_eo - pmatch[0].rm_so, &cmd_tab[i].pattern[2] );

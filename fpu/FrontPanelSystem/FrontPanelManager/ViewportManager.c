@@ -69,7 +69,7 @@ extern void routing_return(int, char *, char *s);
 extern int is_active( int );
 extern void virtual_terminal_return( int, char * );
 
-#define REGEX_INIT { .buffer = NULL }
+#define REGEX_INIT { }
 
 // special strings
 struct {
@@ -304,7 +304,7 @@ out:
 	DBG("%s: %02x %02x %02x %02x\n", __func__, buf[0], buf[1], buf[2], buf[3]);
 	// compare the sequence to the list of special strings
 	for(i = 0; i<SPECIAL_STRING_SIZE; i++) {
-		if(regexec(&special_string[i].preg, buf, 0, NULL, 0) == REG_NOERROR) {
+		if(regexec(&special_string[i].preg, buf, 0, NULL, 0) == 0) {
 			break;
 		}
 	}
@@ -339,7 +339,7 @@ void viewport_listener( char *filepath )
 
 	// prepare the regular expression pattern buffers for the special strings.
 	for(i = 0; i < SPECIAL_STRING_SIZE; i++) {
-		if( (errcode = regcomp( &special_string[i].preg, special_string[i].pattern, REG_EXTENDED | REG_NOSUB )) != REG_NOERROR ) {
+		if( (errcode = regcomp( &special_string[i].preg, special_string[i].pattern, REG_EXTENDED | REG_NOSUB )) != 0 ) {
 			char errbuf[128];
 			regerror( errcode, &special_string[i].preg, errbuf, sizeof( errbuf ) );
 			fprintf( stderr, "%s: regcomp failed with > %s\n", __func__, errbuf );
