@@ -308,7 +308,10 @@ extern int fio_fiod_frame_write( FIO_APP_HANDLE fh,
 					unsigned char *payload,
 					unsigned int count);
 
-					
+#ifdef TS2_PORT1_STATE
+extern int fio_ts2_port1_state( FIO_APP_HANDLE fh, FIO_PORT port,
+                                        FIO_TS2_PORT1_STATE * );
+#endif				
 #endif /* #ifndef _FIO_API_H_ */
 
 

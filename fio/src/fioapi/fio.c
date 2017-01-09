@@ -670,7 +670,28 @@ fio_fiod_ts1_volt_monitor_set
 
 	return ( ioctl( (int)app_handle, FIOMAN_IOC_TS1_VM_SET, &ts1_vms ) );
 }
+#ifdef TS2_PORT1_STATE
+/*****************************************************************************/
+/*
+This function is used to return the state of the TS2 port1 disable pin.
+*/
+/*****************************************************************************/
 
+int
+fio_ts2_port1_state
+(
+	FIO_APP_HANDLE	app_handle,     /* FIO APP Handle from fio_register() */
+	FIO_PORT	port,           /* TS2 serial port in use */
+        FIO_TS2_PORT1_STATE *state
+)
+{
+        FIO_IOC_TS2_PORT1_STATE port1_state;
+        port1_state.port = port;
+        port1_state.state = state;
+        
+	return ( ioctl( (int)app_handle, FIOMAN_IOC_TS2_PORT1_STATE, &port1_state ) );
+}
+#endif
 /*****************************************************************************/
 /*
 This function is used to return the CMU configuration change count.

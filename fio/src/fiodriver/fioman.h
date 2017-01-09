@@ -41,6 +41,7 @@ This file contains all definitions for the FIOMAN.
 #include	<linux/kfifo.h>
 
 /* Local includes. */
+#define TS2_PORT1_STATE 1
 #include	"fiodriver.h"			/* FIO Driver Definitions */
 
 /*  Definition section.

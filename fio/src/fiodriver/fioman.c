@@ -41,6 +41,7 @@ TEG - NO LOCKING IS IN PLACE.  THIS IS NOT AN ISSUE FOR INITIAL DEVELOPMENT
 #include	<linux/time.h>
 #include	<linux/kfifo.h>
 #include	<asm/uaccess.h>		/* User Space Access Definitions */
+#include        <linux/termios.h>
 
 /* Local includes. */
 #include	"fioman.h"			/* FIOMAN Definitions */
@@ -63,6 +64,7 @@ int local_time_offset = 0;
 
 /*  Private API declaration (prototype) section.
 -----------------------------------------------------------------------------*/
+extern int sdlc_kernel_ioctl(void *context, int command, unsigned long parameters);
 int fioman_hm_register( struct file *, unsigned int);
 int fioman_hm_deregister( struct file *);
 int fioman_hm_heartbeat( struct file *);
@@ -3424,7 +3426,38 @@ int fioman_ts1_volt_monitor_get
 
 	return 0;
 }
+#ifdef TS2_PORT1_STATE
+int fioman_ts2_port1_state
+(
+	struct file		*filp,		/* File Pointer */
+	FIO_IOC_TS2_PORT1_STATE	*p_arg
+)
+{
+	FIOMAN_PRIV_DATA	*p_priv = filp->private_data;	/* Access Apps data */
+        FIO_PORT                port = p_arg->port;
+        FIOMSG_PORT             *p_port;
+        int status;
+        int retval = -1;
+        
+        /* Make sure serial port is opened */
+        pr_debug("fioman_ts2_port1_state: check if port %d is open\n", port); 
+	if (p_port->port_opened) {
+                pr_debug("fioman_ts2_port1_state: port %d is open\n", port); 
+		p_port = &fio_port_table[port];
+                /* get modem pin status from port */
+                if ((retval = sdlc_kernel_ioctl(p_port->context, TIOCMGET, (unsigned long)&status)) == 0) {
+                        pr_debug("fioman_ts2_port1_state: port %d status=%x\n", port, status); 
+                        /* check DCD status for port1 disable state */
+                        if (status & TIOCM_CAR)
+                                put_user(FIO_TS2_PORT1_ENABLED, p_arg->state);
+                        else
+                                put_user(FIO_TS2_PORT1_DISABLED, p_arg->state);
+                }
+	}
 
+	return retval;
+}
+#endif
 int fioman_frame_schedule_set
 (
 	struct file			*filp,
@@ -4813,6 +4846,18 @@ fioman_ioctl
 			break;
 		}
 
+#ifdef TS2_PORT1_STATE
+		/* Request for TS2 port1 disable state */
+		case FIOMAN_IOC_TS2_PORT1_STATE:
+		{
+			FIO_IOC_TS2_PORT1_STATE *p_arg = (FIO_IOC_TS2_PORT1_STATE *)arg;
+
+			printk( KERN_ALERT "fioman_ioctl TS2_PORT1_STATE\n" );
+			rt_code = fioman_ts2_port1_state( filp, p_arg );
+
+			break;
+		}
+#endif
 		/* Set Frame Schedule list */
 		case FIOMAN_IOC_FIOD_FRAME_SCHD_SET:
 		{
