@@ -41,6 +41,7 @@ This file contains all definitions for the FIOMAN.
 #include	<linux/kfifo.h>
 
 /* Local includes. */
+#define FAULTMON_GPIO 1
 #define LAZY_CLOSE 1
 #define NEW_WATCHDOG 1
 #define TS2_PORT1_STATE 1
