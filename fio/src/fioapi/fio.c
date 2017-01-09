@@ -211,7 +211,7 @@ static char lkm_version[80] = "";
 char *fio_apiver( FIO_APP_HANDLE app_handle, FIO_VERSION which )
 {
 	if (which == FIO_VERSION_LIBRARY)
-		return( "APIRI, 1.1, 2.17" );
+		return( "Intelight, 2.01, 2.17" );
 	if (which == FIO_VERSION_LKM) {
 		if (ioctl( (int)app_handle, FIOMAN_IOC_VERSION_GET, lkm_version) != -1) {
 			return lkm_version;

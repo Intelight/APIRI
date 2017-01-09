@@ -5226,7 +5226,7 @@ fioman_ioctl
 		case FIOMAN_IOC_VERSION_GET:
 		{
 			FIO_IOC_VERSION_GET *p_arg = (FIO_IOC_VERSION_GET *)arg;
-			char ver[80] = "APIRI, 1.1, 2.17";
+			char ver[80] = "Intelight, 2.01, 2.17";
 			
 			if (copy_to_user(p_arg, ver, strlen(ver) )) {
 				/* Could not copy for some reason */
