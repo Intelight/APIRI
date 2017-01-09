@@ -45,7 +45,7 @@
 
 char *tod_apiver(void)
 {
-	return "APIRI, 1.1, 2.17";
+	return "Intelight, 2.01, 2.17";
 }
 
 int tod_ioctl_call(int command, int arg)
