@@ -444,7 +444,10 @@ fioman_add_frame
                 if (frame_no >= FIOMAN_FRAME_NO_20 && frame_no <= FIOMAN_FRAME_NO_23) {
                         txframe = fioman_ready_frame_20_23(p_sys_fiod, frame_no);
                         rxframe = fioman_ready_frame_148_151(p_sys_fiod, frame_no + 128);
-                }
+                } else if (frame_no >= FIOMAN_FRAME_NO_23 && frame_no <= FIOMAN_FRAME_NO_27) {
+                        txframe = fioman_ready_frame_24_27(p_sys_fiod, frame_no);
+                        rxframe = fioman_ready_frame_152_155(p_sys_fiod, frame_no + 128);
+		}
                 break;
         }
         case FIOTF1:case FIOTF2:case FIOTF3:case FIOTF4:
@@ -828,6 +831,9 @@ fioman_add_def_fiod_frames
 			if (rx_frame)
 				list_add_tail( &((FIOMSG_RX_FRAME *)(rx_frame))->elem, rx_frames );
 
+			/* Indicate other valid frames not sent by default */
+			p_fiod->frame_frequency_table[24] = FIO_HZ_0;
+			
 			break;
 		}
 		case FIODR2:
@@ -850,6 +856,9 @@ fioman_add_def_fiod_frames
 
 			if (rx_frame)
 				list_add_tail( &((FIOMSG_RX_FRAME *)(rx_frame))->elem, rx_frames );
+
+			/* Indicate other valid frames not sent by default */
+			p_fiod->frame_frequency_table[25] = FIO_HZ_0;
 
 			break;
 		}
@@ -875,6 +884,9 @@ fioman_add_def_fiod_frames
 			if (rx_frame)
 				list_add_tail( &((FIOMSG_RX_FRAME *)(rx_frame))->elem, rx_frames );
 
+			/* Indicate other valid frames not sent by default */
+			p_fiod->frame_frequency_table[26] = FIO_HZ_0;
+
 			break;
 		}
 		case FIODR4:
@@ -897,6 +909,9 @@ fioman_add_def_fiod_frames
 
 			if (rx_frame)
 				list_add_tail( &((FIOMSG_RX_FRAME *)(rx_frame))->elem, rx_frames );
+
+			/* Indicate other valid frames not sent by default */
+			p_fiod->frame_frequency_table[27] = FIO_HZ_0;
 
 			break;
 		}
