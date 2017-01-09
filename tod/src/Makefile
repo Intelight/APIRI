@@ -10,12 +10,14 @@ OBJECTS := $(SOURCES:.c=.o)
 	$(CC) -g -O2 -fPIC -Wall $(INCLUDES) -c $<
 
 ## Targets
-TARGET := libtod.so
+TARGET := libtod.so.1.0
 
 all: $(TARGET)
 
 $(TARGET) : $(OBJECTS)
-	$(CC) -shared -fPIC -O2 $(INCLUDES) $(LIBRARIES) -o $@ $(OBJECTS)
+	$(CC) -shared -Wl,-soname,libtod.so.1 -fPIC -O2 $(INCLUDES) $(LIBRARIES) -o $@ $(OBJECTS)
+	ln -s $@ libtod.so.1
+	ln -s $@ libtod.so
 
 install:
 	cp $(TARGET) $(HOME)/bin
