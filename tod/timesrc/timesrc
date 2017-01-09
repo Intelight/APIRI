@@ -21,10 +21,6 @@ currentSource() {
 	fi
 }
 
-removeExistingSources() {
-	sed -i '|LSYN|d;|GPS|d;|server|d' /etc/chrony.conf
-}
-
 setSource() {
 	currentSource
 
@@ -41,7 +37,7 @@ setSource() {
 			;;
 		EXTERNAL1)
 			echo "setting timesrc to EXTERNAL1(3)"
-			port=$(awk -v pattern=sp$2 '$0 ~ pattern {print $1}' /etc/mdev.conf)
+			port=$(cat /etc/mdev.conf | grep -w sp$2 | awk '{print $1}')
 			sed -i "1s|^|refclock SOCK /var/run/chrony.$port.sock refid GPSD\n|" /etc/chrony.conf
 			sed -i "/export DEVICES=/c\export DEVICES=\"/dev/$port\"" /etc/gpsd.conf	
 			;;
@@ -57,25 +53,21 @@ setSource() {
 	/etc/init.d/S50gpsd start
 }
 
-setLinesync() {
-	currentSource
-	echo "setting timesrc to LINESYNC(0)"
-	removeExistingSources
-	sed -i '1s|^|refclock PPS /dev/pps0 maxdispersion 0.01 refid LSYN\n|' /etc/chronyc.conf
-}
-
-setCrystal() {
-	echo "RTC_SQUARE_WAVE is unsupported"
-	exit 1
-}
-
 if [ "$#" = "0" ]; then
 	currentSource
 	exit 0
 fi
 
 case "$1" in
-	LINESYNC|CRYSTAL|EXTERNAL1|EXTERNAL2)
+	LINESYNC|CRYSTAL)
+		setSource $1
+		;;
+	EXTERNAL1|EXTERNAL2)
+		if [ -z "$2" ]; then
+			echo "missing argument $@"
+			usage
+			exit 1
+		fi
 		setSource $1 $2
 		;;
 	RTC_SQUARE_WAVE)
