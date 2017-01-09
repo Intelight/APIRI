@@ -291,6 +291,12 @@ extern int fio_fiod_wd_reservation_set( FIO_APP_HANDLE fh,
 					FIO_DEV_HANDLE dh,
 					unsigned int op);
 
+#ifdef NEW_WATCHDOG
+extern int fio_fiod_wd_rate_set( FIO_APP_HANDLE fh,
+					FIO_DEV_HANDLE dh,
+					FIO_HZ rate);
+#endif
+
 extern int fio_fiod_wd_heartbeat( FIO_APP_HANDLE fh,
 					FIO_DEV_HANDLE dh);
 					

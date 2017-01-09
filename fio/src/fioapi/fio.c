@@ -1258,7 +1258,30 @@ fio_fiod_wd_reservation_set
 
 	return ( ioctl( (int)app_handle, FIOMAN_IOC_WD_RES_SET, &request ) );
 }
+#ifdef NEW_WATCHDOG
+/*****************************************************************************/
+/*
+This function is used to set the watchdog toggle rate.
+*/
+/*****************************************************************************/
 
+int
+fio_fiod_wd_rate_set
+(
+	FIO_APP_HANDLE		app_handle,	/* FIO APP Handle from fio_register() */
+	FIO_DEV_HANDLE		dev_handle,	/* FIOD Handle fio_fiod_register() */
+	FIO_HZ		        rate		/* watchdog toggle rate enum */
+)
+{
+	FIO_IOC_FIOD_WD_RATE_SET        request;        /* IOCTL argument structure */
+
+	/* Set up IOCTL structure */
+	request.dev_handle = dev_handle;
+	request.rate = rate;
+
+	return ( ioctl( (int)app_handle, FIOMAN_IOC_WD_RATE_SET, &request ) );
+}
+#endif
 /*****************************************************************************/
 /*
 This function is used to toggle the watchdog output.

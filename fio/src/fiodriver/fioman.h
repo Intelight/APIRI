@@ -41,6 +41,8 @@ This file contains all definitions for the FIOMAN.
 #include	<linux/kfifo.h>
 
 /* Local includes. */
+#define LAZY_CLOSE 1
+#define NEW_WATCHDOG 1
 #define TS2_PORT1_STATE 1
 #include	"fiodriver.h"			/* FIO Driver Definitions */
 
@@ -79,6 +81,9 @@ struct fioman_priv_data
 	bool                    hm_fault;                /* Health Monitor fault/timeout indication */
         FIOMAN_FIFO             frame_notification_fifo; /* fifo of FIO_NOTIFY_INFO entries */
         bool                    transaction_in_progress; /* Buffer app_fiods outputs if true */ 
+#ifdef LAZY_CLOSE
+        struct list_head        elem;           /* Allow structure in list */
+#endif
 };
 typedef	struct	fioman_priv_data	FIOMAN_PRIV_DATA;
 
@@ -126,7 +131,12 @@ struct fioman_sys_fiod
 	u32	cmu_config_change_count;
 	int 	watchdog_output;
 	bool	watchdog_state;
+#ifdef NEW_WATCHDOG
+        FIO_HZ  watchdog_rate;
+        int     watchdog_countdown;
+#else
 	bool	watchdog_trigger_condition;
+#endif
 	u32	success_rx;					/* Cumulative count of successful responses */
 	u32	error_rx;					/* Cumulative count of response errors */
 };
@@ -166,6 +176,9 @@ struct fioman_app_fiod
 	FIO_CMU_DC_MASK		cmu_mask;
 	bool			watchdog_reservation;
 	bool			watchdog_toggle_pending;
+#ifdef NEW_WATCHDOG
+        FIO_HZ                  watchdog_rate;
+#endif
 	bool			hm_disabled;
 };
 typedef	struct	fioman_app_fiod	FIOMAN_APP_FIOD;

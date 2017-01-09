@@ -59,7 +59,9 @@ FIOMSG_PORT	fio_port_table[ FIO_PORTS_MAX ];
 struct list_head	fioman_fiod_list;
 
 FIO_DEV_HANDLE		fioman_fiod_dev_next;
-
+#ifdef LAZY_CLOSE
+struct list_head        priv_list;
+#endif
 int local_time_offset = 0;
 
 /*  Private API declaration (prototype) section.
@@ -249,6 +251,10 @@ fioman_do_dereg_fiod
 )
 {
 	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* Ptr to FIOMAN fiod structure */
+#ifdef NEW_WATCHDOG
+	struct list_head	*p_app_elem;	/* Ptr to app element being examined */
+        FIO_HZ                  new_rate;
+#endif
 
 	/* See if this FIOD is currently enabled */
 	if ( p_app_fiod->enabled )
@@ -276,6 +282,31 @@ fioman_do_dereg_fiod
 		list_del_init( &p_sys_fiod->elem );
 		kfree( p_sys_fiod );
 	}
+#ifdef NEW_WATCHDOG
+	 else {
+                /* re-assess the watchdog rate if required */
+                if ((p_sys_fiod->watchdog_output >= 0)
+                        && (p_sys_fiod->watchdog_rate != FIO_HZ_0)) {
+                        new_rate = FIO_HZ_0;
+                        p_app_fiod = NULL;
+                        list_for_each( p_app_elem, &p_sys_fiod->app_fiod_list )
+                        {
+                                /* Get a ptr to this list entry */
+                                p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, sys_elem );
+                                if (p_app_fiod->watchdog_reservation) {
+                                        if (p_app_fiod->watchdog_rate > new_rate) {
+                                                new_rate = p_app_fiod->watchdog_rate;
+                                        }
+                                }
+                        }
+
+                        if (new_rate !=  p_sys_fiod->watchdog_rate) {
+                                p_sys_fiod->watchdog_rate = new_rate;
+                                pr_debug("fioman_do_dereg_fiod: new wd rate %d\n", new_rate);
+                        }
+                }
+        }
+#endif
 }
 
 /*****************************************************************************/
@@ -1255,7 +1286,11 @@ fioman_reg_fiod
 		p_sys_fiod->cmu_config_change_count = 0;
 		p_sys_fiod->watchdog_output = -1;
 		p_sys_fiod->watchdog_state = false;
+#ifdef NEW_WATCHDOG
+                p_sys_fiod->watchdog_rate = FIO_HZ_0;
+#else
 		p_sys_fiod->watchdog_trigger_condition = false;
+#endif
 		for (i=0; i<128; i++) {
 			/* Indicate invalid frame by default */
 			p_sys_fiod->frame_frequency_table[i] = -1;
@@ -1317,6 +1352,9 @@ fioman_reg_fiod
 	p_app_fiod->cmu_mask = p_sys_fiod->cmu_mask;
 	p_app_fiod->watchdog_reservation = false;
 	p_app_fiod->watchdog_toggle_pending = false;
+#ifdef NEW_WATCHDOG
+        p_app_fiod->watchdog_rate = FIO_HZ_0;
+#endif
 	p_app_fiod->hm_disabled = false;
 	p_app_fiod->enabled = false;
         FIOMAN_FIFO_ALLOC(p_app_fiod->transition_fifo, sizeof(FIO_TRANS_BUFFER)*1024, GFP_KERNEL);
@@ -3954,6 +3992,9 @@ fioman_wd_deregister
 	}
 
 	p_app_fiod->watchdog_reservation = false;
+#ifdef NEW_WATCHDOG
+        p_app_fiod->watchdog_rate = FIO_HZ_0;
+#endif
 	return 0;
 }
 
@@ -4025,6 +4066,60 @@ int fioman_wd_reservation_get
 	return put_user(p_sys_fiod->watchdog_output, p_arg->output);
 }
 
+#ifdef NEW_WATCHDOG
+int fioman_wd_rate_set
+(
+	struct file		        *filp,
+	FIO_IOC_FIOD_WD_RATE_SET        *p_arg
+)
+{
+	FIOMAN_PRIV_DATA	*p_priv = filp->private_data;	/* Access Apps data */
+	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
+	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* Ptr to FIOMAN fiod structure */
+	struct list_head	*p_app_elem;	/* Ptr to app element being examined */
+        FIO_HZ                  new_rate;
+
+	/* Find this APP registration */
+	p_app_fiod = fioman_find_dev( p_priv, p_arg->dev_handle );
+	/* See if we found the dev_handle */
+	if ( NULL == p_app_fiod ) {
+		/* No, return error */
+		return -EINVAL;
+	}
+
+	/* app not registered for watchdog or health monitor service */
+	if ((p_app_fiod->watchdog_reservation == false) || (p_priv->hm_timeout == 0))
+		return -EACCES;
+
+	/* invalid arg or output number out-of-range */
+	if ((p_arg == NULL) || (p_arg->rate < FIO_HZ_0) || (p_arg->rate >= FIO_HZ_MAX))
+		return -EINVAL;
+	
+        p_app_fiod->watchdog_rate = new_rate = p_arg->rate;
+        
+	p_sys_fiod = p_app_fiod->p_sys_fiod;
+
+        /* Check for new highest wd rate of all apps */
+	p_app_fiod = NULL;
+	list_for_each( p_app_elem, &p_sys_fiod->app_fiod_list )
+	{
+		/* Get a ptr to this list entry */
+		p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, sys_elem );
+		if (p_app_fiod->watchdog_reservation) {
+                        if (p_app_fiod->watchdog_rate > new_rate) {
+                                new_rate = p_app_fiod->watchdog_rate;
+                        }
+                }
+	}
+
+	if (new_rate > p_sys_fiod->watchdog_rate) {
+                p_sys_fiod->watchdog_rate = new_rate;
+                pr_debug("fioman_wd_rate_set: new rate %d\n", new_rate);
+        }
+	
+	return 0;
+}
+#endif
 /*****************************************************************************/
 /*
 This function is used to request toggle of the watchdog output state.
@@ -4060,10 +4155,11 @@ fioman_wd_heartbeat
 
 	p_app_fiod->watchdog_toggle_pending = true;
 	
+#ifndef NEW_WATCHDOG
 	/* Don't toggle output if set outputs frame has not yet been sent */
 	if (p_sys_fiod->watchdog_trigger_condition == true)
 		return 0;
-		
+#endif
 	/* Check toggle pending status of all watchdog clients for this fiod */
 	/* if all have toggled, change watchdog state, then clear all pending flags */
 	p_app_fiod = NULL;
@@ -4081,7 +4177,9 @@ fioman_wd_heartbeat
 	}
 	/* All apps have toggled watchdog */
 	spin_lock_irqsave(&p_sys_fiod->lock, flags);
+#ifndef NEW_WATCHDOG
 	p_sys_fiod->watchdog_trigger_condition = true;
+#endif
 	p_sys_fiod->watchdog_state = !p_sys_fiod->watchdog_state;
 	FIO_BIT_CLEAR(p_sys_fiod->outputs_plus, p_sys_fiod->watchdog_output);
 	FIO_BIT_CLEAR(p_sys_fiod->outputs_minus, p_sys_fiod->watchdog_output);
@@ -4117,6 +4215,12 @@ void hm_timeout(struct work_struct *work)
         FIOMAN_PRIV_DATA        *p_priv = hm_timeout_priv;
 	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
 	struct list_head 	*p_app_elem;	/* Ptr to app list element */
+#ifdef LAZY_CLOSE
+        struct list_head        *p_app_next;
+        struct list_head        *p_priv_elem;
+        struct list_head        *p_priv_next;
+        FIOMAN_PRIV_DATA        *p_priv_old;
+#endif
 
         pr_debug("hm_timeout: disable failed app @%p\n", p_priv);
 
@@ -4135,6 +4239,30 @@ void hm_timeout(struct work_struct *work)
                 p_app_fiod->hm_disabled = true;
 	}
 
+#ifdef LAZY_CLOSE
+        /* search for this app priv_data in lazy close list */
+        list_for_each_safe(p_priv_elem, p_priv_next, &priv_list) {
+                p_priv_old = list_entry(p_priv_elem, FIOMAN_PRIV_DATA, elem);
+                if (p_priv_old->hm_fault) {
+                        /* found in lazy close list and hm timeout */
+                        /* Deregister every FIOD still registered */
+                        list_for_each_safe( p_app_elem, p_app_next, &p_priv_old->fiod_list )
+                        {
+                                /* Get a ptr to this list entry */
+                                p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, elem );
+
+                                /* Do the deregister for this FIOD */
+                                fioman_do_dereg_fiod( p_app_fiod );
+                        }
+                        /* Delete this list entry */
+                        list_del_init( p_priv_elem );
+
+                        /* Free the memory */
+                        kfree( p_priv_old );
+                        return;
+                }
+        }
+#endif
         
         return;
 }
@@ -4311,7 +4439,40 @@ fioman_open
 {
 	FIOMAN_PRIV_DATA	*p_priv;	/* Ptr to private App data */
 
-	/* Allocate our App private data */
+#ifdef LAZY_CLOSE
+        // Release the resources of all closed apps private data
+	struct list_head	*p_app_elem;	/* Ptr to app element being examined */
+	struct list_head	*p_app_next;	/* Temp Ptr to next for loop */
+	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
+        struct list_head        *p_priv_elem;
+        struct list_head        *p_priv_next;
+        FIOMAN_PRIV_DATA        *p_priv_old;
+        
+        p_priv_elem = NULL;
+        list_for_each_safe( p_priv_elem, p_priv_next, &priv_list)
+        {
+		/* Get a ptr to this list entry */
+		p_priv_old = list_entry( p_priv_elem, FIOMAN_PRIV_DATA, elem );
+
+                if (timer_pending(&p_priv_old->hm_timer))
+                        del_timer(&p_priv_old->hm_timer);
+                        
+                /* Deregister every FIOD still registered */
+                list_for_each_safe( p_app_elem, p_app_next, &p_priv_old->fiod_list )
+                {
+                        /* Get a ptr to this list entry */
+                        p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, elem );
+
+                        /* Do the deregister for this FIOD */
+                        fioman_do_dereg_fiod( p_app_fiod );
+                }
+		/* Delete this entry */
+		list_del_init( p_priv_elem );
+
+		/* Free the memory */
+		kfree( p_priv_old );
+        }
+#endif
 	/* Allocate our new App private data */
 	if ( ! ( p_priv = (FIOMAN_PRIV_DATA *)kmalloc( sizeof( FIOMAN_PRIV_DATA ), GFP_KERNEL ) ) )
 	{
@@ -4364,6 +4525,14 @@ fioman_release
 
 	/* Get the APPs private data */
 	p_priv = (FIOMAN_PRIV_DATA *)filp->private_data;
+#ifdef LAZY_CLOSE
+        if (p_priv->hm_timeout != 0) {
+                /* detach and save this priv data struct until hm timeout */
+                list_add_tail(&p_priv->elem, &priv_list);
+                
+                return 0;
+        } 
+#endif
 pr_debug("fioman_release: cancel hm timer for app %p\n", p_priv);
         if (timer_pending(&p_priv->hm_timer))
                 del_timer(&p_priv->hm_timer);
@@ -5005,6 +5174,19 @@ fioman_ioctl
 			break;
 		}
 
+#ifdef NEW_WATCHDOG
+		/* Set watchdog output toggle rate */
+		case FIOMAN_IOC_WD_RATE_SET:
+		{
+			FIO_IOC_FIOD_WD_RATE_SET *p_arg = (FIO_IOC_FIOD_WD_RATE_SET *)arg;
+
+			/*printk( KERN_ALERT "fioman_ioctl WD_RATE_SET\n" );*/
+
+			rt_code = fioman_wd_rate_set( filp, p_arg );
+
+			break;
+		}
+#endif
 		/* Request toggle of watchdog output */
 		case FIOMAN_IOC_WD_HB:
 		{
@@ -5122,6 +5304,9 @@ fioman_init
 
         INIT_WORK(&hm_timeout_work, hm_timeout);
         
+#ifdef LAZY_CLOSE
+        INIT_LIST_HEAD( &priv_list );
+#endif
 }
 
 /*****************************************************************************/
@@ -5142,6 +5327,39 @@ fioman_exit
 	struct list_head	*p_next;		/* Temp for loop */
 	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* Items to kill */
 
+#ifdef LAZY_CLOSE
+	struct list_head	*p_app_elem;	/* Ptr to app element being examined */
+        struct list_head        *p_app_next;
+	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
+        struct list_head        *p_priv_elem;
+        struct list_head        *p_priv_next;
+        FIOMAN_PRIV_DATA        *p_priv_old;
+        
+        // Release the resources of priv_list
+        list_for_each_safe( p_priv_elem, p_priv_next, &priv_list)
+        {
+		/* Get a ptr to this list entry */
+		p_priv_old = list_entry( p_priv_elem, FIOMAN_PRIV_DATA, elem );
+
+                if (timer_pending(&p_priv_old->hm_timer))
+                        del_timer(&p_priv_old->hm_timer);
+                        
+                /* Deregister every FIOD still registered */
+                list_for_each_safe( p_app_elem, p_app_next, &p_priv_old->fiod_list )
+                {
+                        /* Get a ptr to this list entry */
+                        p_app_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, elem );
+
+                        /* Do the deregister for this FIOD */
+                        fioman_do_dereg_fiod( p_app_fiod );
+                }
+		/* Delete this entry */
+		list_del_init( p_priv_elem );
+
+		/* Free the memory */
+		kfree( p_priv_old );
+        }
+#endif
 	/* Clean up the FIOMAN FIOD list -- should be empty (this is safety) */
 	list_for_each_safe( p_sys_elem, p_next, &fioman_fiod_list )
 	{

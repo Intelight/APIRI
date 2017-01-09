@@ -916,10 +916,28 @@ fioman_tx_frame_55
 				FIO_BIT_CLEAR(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, 79);
 		}
 	}
-
+#ifdef NEW_WATCHDOG
+        if ((p_sys_fiod->watchdog_output >= 0)
+                && (p_sys_fiod->watchdog_rate > FIO_HZ_ONCE) 
+                && (p_tx_frame->cur_freq > FIO_HZ_ONCE)) {
+                if (p_sys_fiod->watchdog_countdown == 0) {
+                        /* toggle output */
+                        p_sys_fiod->watchdog_state = !p_sys_fiod->watchdog_state;
+                        /* refresh count */
+                        p_sys_fiod->watchdog_countdown = 
+                                fiomsg_get_hertz(p_tx_frame->cur_freq) / fiomsg_get_hertz(p_sys_fiod->watchdog_rate);
+                }
+                p_sys_fiod->watchdog_countdown--;
+                FIO_BIT_CLEAR(&FIOMSG_PAYLOAD(p_tx_frame)->frame_info[count], p_sys_fiod->watchdog_output);
+                if (p_sys_fiod->watchdog_state)
+                        FIO_BIT_SET(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, p_sys_fiod->watchdog_output);
+                else
+                        FIO_BIT_CLEAR(FIOMSG_PAYLOAD(p_tx_frame)->frame_info, p_sys_fiod->watchdog_output);
+        }
+#else
 	/* Clear the trigger condition now that the watchdog output is sent */
 	p_sys_fiod->watchdog_trigger_condition = false;
-	
+#endif
 	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
 	pr_debug( "UPDATING Frame 55: %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x\n",
 		p_tx_frame->frame[3], p_tx_frame->frame[4], p_tx_frame->frame[5],

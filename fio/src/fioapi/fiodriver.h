@@ -136,6 +136,7 @@ enum fioman_iocs
         FIOMAN_IOC_54,                  /* Begin outputs set transaction */
         FIOMAN_IOC_55,                  /* Commit outputs set transaction */	
         FIOMAN_IOC_56,                  /* Get state of TS2 port 1 disable pin */
+        FIOMAN_IOC_57,                  /* Set watchdog toggle rate */
 	FIOMAN_IOC_MAX			/* End of FIOMSG Range */
 };
 typedef	enum fioman_iocs	FIOMAN_IOCS;
