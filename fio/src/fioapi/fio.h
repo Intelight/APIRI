@@ -34,6 +34,10 @@ This file contains all definitions for the FIO API.
 
 /*  Include section.
 -----------------------------------------------------------------------------*/
+#define FAULTMON_GPIO 1
+#define LAZY_CLOSE 1
+#define NEW_WATCHDOG 1
+#define TS2_PORT1_STATE 1
 
 /* System includes. */
 #include <stdbool.h>
@@ -291,6 +295,12 @@ extern int fio_fiod_wd_reservation_set( FIO_APP_HANDLE fh,
 					FIO_DEV_HANDLE dh,
 					unsigned int op);
 
+#ifdef NEW_WATCHDOG
+extern int fio_fiod_wd_rate_set( FIO_APP_HANDLE fh,
+					FIO_DEV_HANDLE dh,
+					FIO_HZ rate);
+#endif
+
 extern int fio_fiod_wd_heartbeat( FIO_APP_HANDLE fh,
 					FIO_DEV_HANDLE dh);
 					
@@ -308,7 +318,10 @@ extern int fio_fiod_frame_write( FIO_APP_HANDLE fh,
 					unsigned char *payload,
 					unsigned int count);
 
-					
+#ifdef TS2_PORT1_STATE
+extern int fio_ts2_port1_state( FIO_APP_HANDLE fh, FIO_PORT port,
+                                        FIO_TS2_PORT1_STATE * );
+#endif				
 #endif /* #ifndef _FIO_API_H_ */
 
 
