@@ -34,6 +34,10 @@ This file contains all definitions for the FIO API.
 
 /*  Include section.
 -----------------------------------------------------------------------------*/
+#define FAULTMON_GPIO 1
+#define LAZY_CLOSE 1
+#define NEW_WATCHDOG 1
+#define TS2_PORT1_STATE 1
 
 /* System includes. */
 #include <stdbool.h>
