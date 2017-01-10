@@ -71,7 +71,7 @@ extern void virtual_terminal_return( int, char * );
 extern bool emergency_mode;
 bool emergency_flash = false;
 
-#define REGEX_INIT { .buffer = NULL }
+#define REGEX_INIT { }
 
 // special strings
 struct {
@@ -308,7 +308,7 @@ int parse_escape_seq(int fd, char *buf, int len)
 		break;
 	}
 
-	for( i = 3; (ch != 'R') && (i < (len-1)); i++ ) {
+	for( i = 3; (ch != 'R') && (ch != '~') && (i < (len-1)); i++ ) {
 		read(fd,&ch,1);
 		buf[i] = ch;
 	}
@@ -317,7 +317,7 @@ out:
 	DBG("%s: %02x %02x %02x %02x\n", __func__, buf[0], buf[1], buf[2], buf[3]);
 	// compare the sequence to the list of special strings
 	for(i = 0; i<SPECIAL_STRING_SIZE; i++) {
-		if(regexec(&special_string[i].preg, buf, 0, NULL, 0) == REG_NOERROR) {
+		if(regexec(&special_string[i].preg, buf, 0, NULL, 0) == 0) {
 			break;
 		}
 	}
@@ -352,7 +352,7 @@ void viewport_listener( char *filepath )
 
 	// prepare the regular expression pattern buffers for the special strings.
 	for(i = 0; i < SPECIAL_STRING_SIZE; i++) {
-		if( (errcode = regcomp( &special_string[i].preg, special_string[i].pattern, REG_EXTENDED | REG_NOSUB )) != REG_NOERROR ) {
+		if( (errcode = regcomp( &special_string[i].preg, special_string[i].pattern, REG_EXTENDED | REG_NOSUB )) != 0 ) {
 			char errbuf[128];
 			regerror( errcode, &special_string[i].preg, errbuf, sizeof( errbuf ) );
 			fprintf( stderr, "%s: regcomp failed with > %s\n", __func__, errbuf );
