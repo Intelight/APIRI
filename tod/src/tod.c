@@ -45,7 +45,7 @@
 
 char *tod_apiver(void)
 {
-	return "APIRI, 1.1, 2.17";
+	return "Intelight, 2.01, 2.17";
 }
 
 int tod_ioctl_call(int command, int arg)
@@ -542,7 +542,7 @@ int tod_set_dst_info(const dst_info_t *dst_info)
 			(dst_info->end.generic.secs_from_midnight_to_transition%3600)/60,
 			(dst_info->end.generic.secs_from_midnight_to_transition%3600)%60);
 		// Write to temp file
-		fd = open("/etc/localtime~", O_RDWR|O_CREAT|O_TRUNC);
+		fd = open("/etc/localtime~", O_RDWR|O_CREAT|O_TRUNC, S_IRUSR|S_IRGRP);
 		if (fd >= 0) {
 			write(fd, buf, (tzstr-buf));
 			fsync(fd);
@@ -686,7 +686,7 @@ int tod_set(const struct timeval *tv, const int *tzsec_off)
 			}
 			*tzstr++ = '\n';
 			// Write to temp file
-			fd = open("/etc/localtime~", O_RDWR|O_CREAT|O_TRUNC);
+			fd = open("/etc/localtime~", O_RDWR|O_CREAT|O_TRUNC, S_IRUSR|S_IRGRP);
 			if (fd >= 0) {
 				write(fd, buf, (tzstr-buf));
 				fsync(fd);
