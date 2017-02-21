@@ -1006,6 +1006,8 @@ fiomsg_port_open
 	/* Open SDLC driver for indicated port */
 	if(p_port->port == FIO_PORT_SP5)
 		channel = ATC_SP5S;
+        else if (p_port->port == FIO_PORT_SP8)
+                channel = ATC_SP8S;
 	else if (p_port->port == FIO_PORT_SP3) {
 		channel = ATC_SP3S;
 		config.baud = ATC_B153600;
