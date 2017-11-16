@@ -936,13 +936,12 @@ fioman_tx_frame_66
 {
 	struct timeval tv;
 	struct tm tm = {0};
-	int offset = 0; /* this is time adjust from fio_set_local_time_offset() */
 /* TEG DEL */
 /*pr_debug( "UPDATING Frame 66\n" );*/
 /* TEG DEL */
 	/* fill in payload with date/time */
 	do_gettimeofday(&tv);
-	time_to_tm(tv.tv_sec,offset,&tm);
+	time_to_tm(tv.tv_sec, local_time_offset, &tm);
 	FIOMSG_PAYLOAD( p_tx_frame )->frame_info[0] = tm.tm_mon+1;
 	FIOMSG_PAYLOAD( p_tx_frame )->frame_info[1] = tm.tm_mday;
 	FIOMSG_PAYLOAD( p_tx_frame )->frame_info[2] = tm.tm_year%100;
