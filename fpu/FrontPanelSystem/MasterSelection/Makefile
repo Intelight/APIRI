@@ -7,7 +7,7 @@ INCLUDES := ../FrontPanelDriver/front_panel.h
 OBJECTS := $(SOURCES:.c=.o)
 
 .c.o:
-	$(CC) -g -O -Wall -I../ -I../FrontPanelDriver -I../libfpui -c $<
+	$(CC) -O2 -Wall -I../ -I../FrontPanelDriver -I../libfpui -c $<
 
 ## Targets
 TARGET := MasterSelection
@@ -15,7 +15,7 @@ TARGET := MasterSelection
 all: $(TARGET)
 
 $(TARGET) : $(OBJECTS) $(INCLUDES)
-	$(CC) -g -O -o $@ $(OBJECTS) $(LIBRARIES)
+	$(CC) -O2 -o $@ $(OBJECTS) $(LIBRARIES)
 
 install:
 	cp $(TARGET) $(HOME)/bin

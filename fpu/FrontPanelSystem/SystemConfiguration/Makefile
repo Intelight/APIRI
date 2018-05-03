@@ -8,7 +8,7 @@ INCLUDES := ../FrontPanelDriver/front_panel.h
 OBJECTS := $(SOURCES:.c=.o)
 
 .c.o:
-	$(CC) -g -O -Wall -I../ -I../libfpui -I../../../fio/src/fioapi \
+	$(CC) -O2 -Wall -I../ -I../libfpui -I../../../fio/src/fioapi \
 	-I../../../tod/src -c $<
 
 ## Targets

@@ -7,7 +7,7 @@ INCLUDES :=
 OBJECTS := $(SOURCES:.c=.o)
 
 .c.o:
-	$(CC) -g -O2 -fPIC -Wall -c $<
+	$(CC) -O2 -fPIC -Wall -c $<
 
 ## Targets
 TARGET := libfio.so.1.0
