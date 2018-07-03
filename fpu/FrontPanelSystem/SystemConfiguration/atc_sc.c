@@ -2707,8 +2707,8 @@ void update_eeprom_screen(void *arg)
 	int fd, eprm_sz = 0;
 	
 	/* update eeprom content from current state before display */
-	sprintf(buffer, "/usr/bin/eeprom -u");
-	system(buffer);
+	/*sprintf(buffer, "/usr/bin/eeprom -u");
+	system(buffer);*/
 	
 	if ((fd = open("/dev/eeprom", O_RDONLY)) != -1) {
 		eprm_sz = read(fd, eeprom, 256);
