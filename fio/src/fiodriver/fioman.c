@@ -2072,7 +2072,7 @@ fioman_channel_map_set
 			return (-EINVAL);
 		if ( FIO_BIT_TEST(p_app_fiod->channels_reserved, channel) == 0 )
 			return (-EPERM);
-		if ((p_app_ref_fiod = fioman_find_dev(p_priv, mappings[ii].dev_handle)) == NULL )
+		if ((p_app_ref_fiod = fioman_find_dev(p_priv, mappings[ii].fiod)) == NULL )
 			return (-EINVAL);
 		if( FIO_BIT_TEST(p_app_ref_fiod->outputs_reserved, output) == 0 )
 			return (-EPERM);
@@ -2100,7 +2100,7 @@ fioman_channel_map_set
 	{
 		channel = mappings[ii].channel;
 		output = mappings[ii].output_point;
-		p_app_ref_fiod = fioman_find_dev(p_priv, mappings[ii].dev_handle);
+		p_app_ref_fiod = fioman_find_dev(p_priv, mappings[ii].fiod);
 		p_sys_ref_fiod = p_app_ref_fiod->p_sys_fiod;
 		switch( mappings[ii].color ) {
 		case FIO_GREEN:
@@ -2180,7 +2180,7 @@ fioman_channel_map_get
 						continue;
 					}
 					mappings[count].channel = ii;
-					mappings[count].dev_handle = p_sys_fiod->dev_handle;
+					mappings[count].fiod = p_sys_fiod->dev_handle;
 					count++;
 				}
 			}
@@ -2207,7 +2207,7 @@ fioman_channel_map_get
 						continue;
 					}
 					mappings[count].channel = ii;
-					mappings[count].dev_handle = p_sys_fiod->dev_handle;
+					mappings[count].fiod = p_sys_fiod->dev_handle;
 					count++;
 				}
 			}
