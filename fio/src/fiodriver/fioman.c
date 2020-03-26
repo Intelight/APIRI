@@ -739,9 +739,9 @@ fioman_add_def_fiod_frames
 		/* ITS CMU */
 		case FIOCMU:
 		{
-			/* send load switch drivers frame 67 + short status response frame 195 */
-			/* Ready frame 67 for this port */
-			tx_frame = fioman_ready_frame_67( p_fiod );
+			/* send load switch drivers frame 81 + status response frame 209 */
+			/* Ready frame 81 for this port */
+			tx_frame = fioman_ready_frame_81( p_fiod );
 
 			/* Make sure frame was created */
 			/* If not system will fail */
@@ -751,7 +751,7 @@ fioman_add_def_fiod_frames
 			}
 
 			/* Ready corresponding response frame */
-			rx_frame = fioman_ready_frame_195( p_fiod );
+			rx_frame = fioman_ready_frame_209( p_fiod );
 
 			/* Make sure frame was created */
 			/* If not, user can never access frame */
@@ -772,9 +772,9 @@ fioman_add_def_fiod_frames
 			p_fiod->frame_frequency_table[60] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[61] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[62] = FIO_HZ_0;
+			p_fiod->frame_frequency_table[67] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[65] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[80] = FIO_HZ_0;
-			p_fiod->frame_frequency_table[81] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[82] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[83] = FIO_HZ_0;
 
