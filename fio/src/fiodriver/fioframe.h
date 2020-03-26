@@ -123,6 +123,14 @@ This file contains all definitions for the FIOMAN.
 #define	FIOMAN_FRAME_NO_66_SIZE		( 10 )	/* addr + ctrl + frame 66 def */
 #define	FIOMAN_FRAME_NO_67			( 67 )
 #define	FIOMAN_FRAME_NO_67_SIZE		( 16 )	/* addr + ctrl + frame 67 def */
+#define	FIOMAN_FRAME_NO_80			( 80 )
+#define	FIOMAN_FRAME_NO_80_SIZE		( 3 )	/* addr + ctrl + frame 80 def */
+#define FIOMAN_FRAME_NO_81			( 81 )
+#define FIOMAN_FRAME_NO_81_SIZE		( 16 )	/* addr + ctrl + frame 81 def */
+#define FIOMAN_FRAME_NO_82                      ( 82 )
+#define	FIOMAN_FRAME_NO_82_SIZE		( 3 )	/* addr + ctrl + frame 82 def */
+#define FIOMAN_FRAME_NO_83			( 83 )
+#define FIOMAN_FRAME_NO_83_SIZE		( 16 )	/* addr + ctrl + frame 83 def */
 
 #define	FIOMAN_FRAME_NO_177			( 177 )
 #define	FIOMAN_FRAME_NO_177_SIZE	( 10 )	/* addr + ctrl + frame 177 def */
@@ -146,6 +154,14 @@ This file contains all definitions for the FIOMAN.
 #define FIOMAN_FRAME_NO_193_SIZE	( 515 )	/* addr + ctrl + frame 193 def */
 #define FIOMAN_FRAME_NO_195			( 195 )
 #define FIOMAN_FRAME_NO_195_SIZE	( 26 )	/* addr + ctrl + frame 195 def */
+#define FIOMAN_FRAME_NO_208			( 208 )
+#define FIOMAN_FRAME_NO_208_SIZE	( 44 )	/* addr + ctrl + frame 208 def */
+#define FIOMAN_FRAME_NO_209			( 209 )
+#define FIOMAN_FRAME_NO_209_SIZE	( 251 )	/* addr + ctrl + frame 209 def */
+#define FIOMAN_FRAME_NO_210			( 210 )
+#define FIOMAN_FRAME_NO_210_SIZE	( 515 )	/* addr + ctrl + frame 210 def */
+#define FIOMAN_FRAME_NO_211			( 211 )
+#define FIOMAN_FRAME_NO_211_SIZE	( 371 )	/* addr + ctrl + frame 211 def */
 
 
 
@@ -170,6 +186,10 @@ void *fioman_ready_frame_61( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_62( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_66( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_67( FIOMAN_SYS_FIOD* );
+void *fioman_ready_frame_80( FIOMAN_SYS_FIOD* );
+void *fioman_ready_frame_81( FIOMAN_SYS_FIOD* );
+void *fioman_ready_frame_82( FIOMAN_SYS_FIOD* );
+void *fioman_ready_frame_83( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_9( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_0( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_1( FIOMAN_SYS_FIOD* );
@@ -191,6 +211,10 @@ void *fioman_ready_frame_183( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_188( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_189( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_195( FIOMAN_SYS_FIOD* );
+void *fioman_ready_frame_208( FIOMAN_SYS_FIOD* );
+void *fioman_ready_frame_209( FIOMAN_SYS_FIOD* );
+void *fioman_ready_frame_210( FIOMAN_SYS_FIOD* );
+void *fioman_ready_frame_211( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_128( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_129( FIOMAN_SYS_FIOD* );
 void *fioman_ready_frame_131( FIOMAN_SYS_FIOD* );
@@ -208,6 +232,8 @@ void fioman_tx_frame_61( FIOMSG_TX_FRAME* );
 void fioman_tx_frame_62( FIOMSG_TX_FRAME* );
 void fioman_tx_frame_66( FIOMSG_TX_FRAME* );
 void fioman_tx_frame_67( FIOMSG_TX_FRAME* );
+void fioman_tx_frame_81( FIOMSG_TX_FRAME* );
+void fioman_tx_frame_83( FIOMSG_TX_FRAME* );
 void fioman_tx_frame_9(	FIOMSG_TX_FRAME* );
 void fioman_tx_frame_0(	FIOMSG_TX_FRAME* );
 void fioman_tx_frame_10_11( FIOMSG_TX_FRAME* );
@@ -227,6 +253,8 @@ void fioman_rx_frame_183( FIOMSG_RX_FRAME* );
 void fioman_rx_frame_188( FIOMSG_RX_FRAME* );
 void fioman_rx_frame_189( FIOMSG_RX_FRAME* );
 void fioman_rx_frame_195( FIOMSG_RX_FRAME* );
+void fioman_rx_frame_209( FIOMSG_RX_FRAME* );
+void fioman_rx_frame_211( FIOMSG_RX_FRAME* );
 
 
 #endif /* #ifndef _FIOFRAME_H_ */
