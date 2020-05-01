@@ -239,6 +239,8 @@ fioman_do_dereg_fiod
 )
 {
 	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* Ptr to FIOMAN fiod structure */
+        unsigned char leading, trailing;
+        int i = 0;
 	struct list_head	*p_app_elem;	/* Ptr to app element being examined */
         FIO_HZ                  new_rate;
 
@@ -259,12 +261,27 @@ fioman_do_dereg_fiod
 	kfree( p_app_fiod );
 	
 	/* See if this is the last registration */
-	if ( 0 == --p_sys_fiod->app_reg )
-	{
-		/* YES, last reference.  Get rid of this list element */
-		list_del_init( &p_sys_fiod->elem );
-		kfree( p_sys_fiod );
-	} else {
+        if ( 0 == --p_sys_fiod->app_reg ) {
+                /* YES, last reference.  Get rid of this list element */
+                list_del_init( &p_sys_fiod->elem );
+                kfree( p_sys_fiod );
+        } else {
+                /* re-assess the input filter values */
+                for (i=0; i<(FIO_INPUT_POINTS_BYTES*8); i++) {
+                        leading = trailing = 255;
+                        p_app_fiod = NULL;
+                        list_for_each(p_app_elem, &p_sys_fiod->app_fiod_list) {
+                                p_app_fiod = list_entry(p_app_elem, FIOMAN_APP_FIOD, sys_elem);
+                                if (p_app_fiod->input_filters_leading[i] < leading) {
+                                        leading = p_app_fiod->input_filters_leading[i];
+                                }
+                                if (p_app_fiod->input_filters_trailing[i] < trailing) {
+                                        trailing = p_app_fiod->input_filters_trailing[i];
+                                }
+                        }
+                        p_sys_fiod->input_filters_leading[i] = (leading < 255)? leading: FIO_FILTER_DEFAULT;
+                        p_sys_fiod->input_filters_trailing[i] = (trailing < 255)? trailing: FIO_FILTER_DEFAULT;
+                }
                 /* re-assess the watchdog rate if required */
                 if ((p_sys_fiod->watchdog_output >= 0)
                         && (p_sys_fiod->watchdog_rate != FIO_HZ_0)) {
@@ -1291,6 +1308,10 @@ fioman_reg_fiod
 	INIT_LIST_HEAD( &p_app_fiod->sys_elem );
 	p_app_fiod->fiod = *fiod;
 	p_app_fiod->dev_handle = p_sys_fiod->dev_handle;
+        for (i=0; i<(FIO_INPUT_POINTS_BYTES*8); i++) {
+                p_app_fiod->input_filters_leading[i] = 255;
+                p_app_fiod->input_filters_trailing[i] = 255;
+        }
 	p_app_fiod->fm_state = p_sys_fiod->fm_state;
 	p_app_fiod->vm_state = p_sys_fiod->vm_state;
 	p_app_fiod->cmu_fsa = p_sys_fiod->cmu_fsa;
@@ -3451,9 +3472,12 @@ int fioman_inputs_filter_set
 	FIOMAN_PRIV_DATA	*p_priv = filp->private_data;	/* Access Apps data */
 	FIOMAN_APP_FIOD		*p_app_fiod;	/* Ptr to app fiod structure */
 	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* Ptr to FIOMAN fiod structure */
+        FIOMAN_APP_FIOD *p_cmp_fiod;                   /* Ptr to compare app fiod */
+        struct list_head *p_app_elem;                  /* Ptr to app element being examined */
 	FIO_INPUT_FILTER	filter;
 	int			i;
 	bool update_fiod = false;
+        unsigned long flags;
 
 	/* Find this APP registration */
 	p_app_fiod = fioman_find_dev( p_priv, p_arg->dev_handle );
@@ -3462,7 +3486,7 @@ int fioman_inputs_filter_set
 		/* No, return error */
 		return -EINVAL;
 	
-	if (p_arg->count >= (FIO_INPUT_POINTS_BYTES*8))
+	if (p_arg->count > (FIO_INPUT_POINTS_BYTES*8))
 		return ( -EFAULT );
 
 	/* VALIDATE array for valid input number and filter values */
@@ -3477,21 +3501,36 @@ pr_debug("fioman_inputs_filter_set: item:%d ip:%d lead:%d trail:%d invalid\n",
 	}
 
 	p_sys_fiod = p_app_fiod->p_sys_fiod;
+        spin_lock_irqsave(&p_sys_fiod->lock, flags);
 	for (i=0; i<p_arg->count; i++) {
 		__copy_from_user(&filter, &p_arg->input_filter[i], sizeof(FIO_INPUT_FILTER));
 		/* Save app-based values */
 		p_app_fiod->input_filters_leading[filter.input_point] = filter.leading;
 		p_app_fiod->input_filters_trailing[filter.input_point] = filter.trailing;
 		/* Use lowest filter values of all apps */
-		if (filter.leading < p_sys_fiod->input_filters_leading[filter.input_point]) {
+                list_for_each( p_app_elem, &p_sys_fiod->app_fiod_list )
+                {
+                        /* Get a ptr to this list entry */
+                        p_cmp_fiod = list_entry( p_app_elem, FIOMAN_APP_FIOD, sys_elem );
+                        if (p_cmp_fiod->input_filters_leading[filter.input_point] < filter.leading) {
+                                filter.leading = p_cmp_fiod->input_filters_leading[filter.input_point];
+                        }
+                        if (p_cmp_fiod->input_filters_trailing[filter.input_point] < filter.trailing) {
+                                filter.trailing = p_cmp_fiod->input_filters_trailing[filter.input_point];
+                        }
+                }
+                if (p_sys_fiod->input_filters_leading[filter.input_point] != filter.leading) {
 			p_sys_fiod->input_filters_leading[filter.input_point] = filter.leading;
 			update_fiod = true;
 		}
-		if (filter.trailing < p_sys_fiod->input_filters_trailing[filter.input_point]) {
+                if (p_sys_fiod->input_filters_trailing[filter.input_point] != filter.trailing) {
 			p_sys_fiod->input_filters_trailing[filter.input_point] = filter.trailing;
 			update_fiod = true;
 		}
+                /* Return system view values to user */
+                copy_to_user(&p_arg->input_filter[i], &filter, sizeof(FIO_INPUT_FILTER));
 	}
+        spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
 
 	/* If any sys_fiod filter values have changed, we must schedule frame #51 */
 	if (update_fiod) {
