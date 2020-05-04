@@ -1005,11 +1005,11 @@ fiomsg_port_open
 	/* Initialize */
 	/* Open SDLC driver for indicated port */
 	if(p_port->port == FIO_PORT_SP5)
-		channel = ATC_LKM_SP5S;
+		channel = ATC_SP5S;
         else if (p_port->port == FIO_PORT_SP8)
-                channel = ATC_LKM_SP8S;
+                channel = ATC_SP8S;
 	else if (p_port->port == FIO_PORT_SP3) {
-		channel = ATC_LKM_SP3S;
+		channel = ATC_SP3S;
 		config.baud = ATC_B153600;
 	} else {
 		printk("fio_port_open: unknown port %d {%d,%d}", p_port->port, FIO_PORT_SP3, FIO_PORT_SP5);
