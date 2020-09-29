@@ -48,6 +48,7 @@ extern struct list_head	fioman_fiod_list;
 extern int fiomsg_get_hertz(FIO_HZ freq);
 extern FIOMSG_TIME fiomsg_tx_frame_when(FIO_HZ freq);
 extern int local_time_offset;
+extern FIOMSG_PORT	fio_port_table[ FIO_PORTS_MAX ];
 
 /*  Global section.
 -----------------------------------------------------------------------------*/
@@ -2504,9 +2505,14 @@ fioman_rx_frame_177
 	/* timestamp */
 
 	/* reset status error flags */
-	if (p_sys_fiod->status & 0xc1)	/* P, E or W bits */
-		p_sys_fiod->status_reset = 0xc1;
-	else
+pr_debug("fioman_rx_frame_177: status=%x\n", p_sys_fiod->status);
+	if (p_sys_fiod->status & 0xc1) {/* P, E or W bits */
+		p_sys_fiod->status_reset = p_sys_fiod->status & 0xc1;
+		/* schedule frame 51 to reconfigure input point filters */
+                /* and reconfigure input transition monitoring */
+		fiomsg_tx_add_frame(FIOMSG_P_PORT(p_sys_fiod->fiod.port), fioman_ready_frame_51(p_sys_fiod));
+                fiomsg_rx_add_frame(FIOMSG_P_PORT(p_sys_fiod->fiod.port), fioman_ready_frame_179(p_sys_fiod));
+	} else
 		p_sys_fiod->status_reset = 0;
 
 	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
