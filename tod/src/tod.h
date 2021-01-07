@@ -23,7 +23,34 @@
 
 #ifndef __TOD_H__
 #define __TOD_H__
+#include <stdint.h>
 #include <sys/time.h>
+
+#define isleap(y) ((y & 3) == 0 && ((y % 25) != 0 || (y & 15) == 0))
+
+#define SECSPERMIN      60
+#define MINSPERHOUR     60
+#define HOURSPERDAY     24
+#define DAYSPERWEEK     7
+#define DAYSPERNYEAR    365
+#define DAYSPERLYEAR    366
+#define SECSPERHOUR     (SECSPERMIN * MINSPERHOUR)
+#define SECSPERDAY      ((int32_t) SECSPERHOUR * HOURSPERDAY)
+#define MONSPERYEAR     12
+
+enum r_type {
+  JULIAN_DAY,           /* Jn = Julian day */
+  DAY_OF_YEAR,          /* n = day of year */
+  MONTH_NTH_DAY_OF_WEEK /* Mm.n.d = month, week, day of week */
+};
+
+struct rule {
+        enum r_type     r_type;         /* type of rule */
+        int             r_day;          /* day number of rule */
+        int             r_week;         /* week number of rule */
+        int             r_mon;          /* month number of rule */
+        int32_t         r_time;         /* transition time of rule */
+};
 
 struct dst_info
 {

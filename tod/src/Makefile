@@ -7,10 +7,10 @@ INCLUDES := ./tod.h ./atc.h
 OBJECTS := $(SOURCES:.c=.o)
 
 .c.o:
-	$(CC) -g -O -fPIC -Wall -c $<
+	$(CC) -O -fPIC -Wall -c $<
 
 ## Targets
-TARGET := libtod.so.1.0
+TARGET := libtod.so.1.1.0
 
 all: $(TARGET)
 
