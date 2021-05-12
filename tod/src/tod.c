@@ -33,7 +33,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <stdbool.h>
-#include <atc.h>
+#include "atc.h"
 #include "tod.h"
 #include "tzfile.h"
 
