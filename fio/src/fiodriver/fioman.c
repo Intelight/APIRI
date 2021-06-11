@@ -461,6 +461,26 @@ fioman_add_frame
                         txframe = fioman_ready_frame_61( p_sys_fiod );
                         rxframe = fioman_ready_frame_189( p_sys_fiod );
                 }
+                case 80:
+                {
+                        txframe = fioman_ready_frame_80( p_sys_fiod );
+                        rxframe = fioman_ready_frame_208( p_sys_fiod );
+                }
+                case 81:
+                {
+                        txframe = fioman_ready_frame_81( p_sys_fiod );
+                        rxframe = fioman_ready_frame_209( p_sys_fiod );
+                }
+                case 82:
+                {
+                        txframe = fioman_ready_frame_82( p_sys_fiod );
+                        rxframe = fioman_ready_frame_210( p_sys_fiod );
+                }
+                case 83:
+                {
+                        txframe = fioman_ready_frame_83( p_sys_fiod );
+                        rxframe = fioman_ready_frame_211( p_sys_fiod );
+                }
                 case 65: default:
                         break;
                 }
@@ -562,6 +582,11 @@ fioman_add_frame
                         txframe = fioman_ready_frame_60(p_sys_fiod);
                         rxframe = fioman_ready_frame_188(p_sys_fiod);
                         break;
+                }
+                case 80:
+                {
+                        txframe = fioman_ready_frame_80( p_sys_fiod );
+                        rxframe = fioman_ready_frame_208( p_sys_fiod );
                 }
                 default:
                         break;
@@ -730,9 +755,9 @@ fioman_add_def_fiod_frames
 		/* ITS CMU */
 		case FIOCMU:
 		{
-			/* send load switch drivers frame 67 + short status response frame 195 */
-			/* Ready frame 67 for this port */
-			tx_frame = fioman_ready_frame_67( p_fiod );
+			/* send load switch drivers frame 81 + status response frame 209 */
+			/* Ready frame 81 for this port */
+			tx_frame = fioman_ready_frame_81( p_fiod );
 
 			/* Make sure frame was created */
 			/* If not system will fail */
@@ -742,7 +767,7 @@ fioman_add_def_fiod_frames
 			}
 
 			/* Ready corresponding response frame */
-			rx_frame = fioman_ready_frame_195( p_fiod );
+			rx_frame = fioman_ready_frame_209( p_fiod );
 
 			/* Make sure frame was created */
 			/* If not, user can never access frame */
@@ -759,13 +784,16 @@ fioman_add_def_fiod_frames
 			if (rx_frame)
 				list_add_tail( &((FIOMSG_RX_FRAME *)(rx_frame))->elem, rx_frames );
 
-#if 1
-			/* Indicate other valid frames not sent by default (FIO332,FIOTS1,FIOINSIU,FIOOUTSIU) */
+			/* Indicate other valid FIOCMU frames not sent by default */
 			p_fiod->frame_frequency_table[60] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[61] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[62] = FIO_HZ_0;
+			p_fiod->frame_frequency_table[67] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[65] = FIO_HZ_0;
-#endif
+			p_fiod->frame_frequency_table[80] = FIO_HZ_0;
+			p_fiod->frame_frequency_table[82] = FIO_HZ_0;
+			p_fiod->frame_frequency_table[83] = FIO_HZ_0;
+
 			break;
 		}
 
@@ -1163,13 +1191,12 @@ fioman_add_def_fiod_frames
 			if (rx_frame)
 				list_add_tail( &((FIOMSG_RX_FRAME *)(rx_frame))->elem, rx_frames );
 
-#if 1
 			/* Indicate other valid frames not sent by default (FIO332,FIOTS1,FIOINSIU,FIOOUTSIU) */
 			p_fiod->frame_frequency_table[51] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[52] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[54] = FIO_HZ_0;
 			p_fiod->frame_frequency_table[60] = FIO_HZ_0;
-#endif
+			p_fiod->frame_frequency_table[80] = FIO_HZ_0;
 
 			break;
 		}
