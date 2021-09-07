@@ -49,6 +49,8 @@ setSource() {
 
 	/etc/init.d/S50gpsd stop
 	/etc/init.d/S49chrony stop
+	adjtimex -t 10000 -f 0 || true
+	rm -rf /var/lib/chrony/dumpdir
 	/etc/init.d/S49chrony start
 	/etc/init.d/S50gpsd start
 }
