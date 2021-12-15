@@ -1,7 +1,7 @@
 /*
  * atc_tod.c -- ATC TOD driver with PPS support
  *
- * Copyright (C) 2015 Doug Crawford <doug.crawford@intelight-its.com>
+ * Copyright (C) 2021 Doug Crawford <doug.crawford@intelight-its.com>
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -17,9 +17,9 @@
  *   along with this program; if not, write to the Free Software
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
-
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -30,46 +30,46 @@
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/miscdevice.h>
+#include <linux/signal.h>
 #include <linux/rtc.h>
-#include <linux/atc.h>
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
-#include <linux/sched.h>
-
-static int pl_freq = 60;
-module_param(pl_freq, int, 0644);
-MODULE_PARM_DESC(pl_freq, "Power Line Frequency (HZ)");
+#include <linux/atc.h>
 
 static char *timesrc = "LINESYNC";
 module_param(timesrc, charp, 0644);
 MODULE_PARM_DESC(timesrc, "ATC Time Source Name");
 
 #define RTC_UPDATE_DELAY 500000000
-#define RTC_SYNC_INTERVAL 16
+#define RTC_POLL_INTERVAL_MIN 4000
+#define RTC_POLL_INTERVAL_MAX 6000
+#define RTC_SYNC_SECONDS 60
 
 /* Info for each registered platform device */
 struct atc_tod_data {
 	int irq;
+	struct workqueue_struct *workqueue;
+	struct work_struct rtc_read_work;
+	struct work_struct rtc_write_work;
 	struct pps_device *pps;
 	struct pps_source_info info;
-	struct timespec ts;
 	struct miscdevice miscdev;
 	struct fasync_struct *tick_async_queue;
 	struct fasync_struct *onchange_async_queue;
-	struct work_struct rtc_read_work;
-	struct work_struct rtc_write_work;
-	struct rtc_time rtc_tm;
-	bool rtc_sync;
-	bool rtc_loaded;
 	int tick_sig_num;
-    int onchange_sig_num;
-	bool linesync_sync;
+	int onchange_sig_num;
 	int count;
 	int frequency;
+	bool frequency_locked;
+	bool pps_aligned;
+	bool rtc_read_complete;
+	int rtc_sync_seconds;
+	int old_second;
+	ktime_t raw;
 	int timesrc;
 	unsigned int gpio_pin;
-	int rtc_errors;
+	unsigned int clock_was_set_seq;
 };
 
 static struct atc_tod_data *global_dev;
@@ -103,10 +103,7 @@ static long atc_tod_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 		ret = dd->timesrc;
 		break;
 	case ATC_TOD_SET_TIMESRC: {
-		unsigned long src;
-		if (copy_from_user(&src, (void __user *)arg, sizeof(unsigned long)))
-			return -EFAULT;
-		switch (src) {
+		switch (arg) {
 		case ATC_TIMESRC_LINESYNC:
 			timesrc_str = "LINESYNC";
 			// probably should re-sync to RTC?
@@ -129,14 +126,14 @@ static long atc_tod_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 		}
 		if (ret == 0) {
 			pr_info( "atc_tod: setting time source to %s\n", timesrc_str);
-			dd->timesrc = src;
+			dd->timesrc = arg;
 		}
 		break;
 	}
 	case ATC_TOD_GET_INPUT_FREQ:
 		if ((dd->timesrc == ATC_TIMESRC_LINESYNC)
 				|| (dd->timesrc == ATC_TIMESRC_RTCSQWR))
-			ret = pl_freq;
+			ret = dd->frequency;
 		else if (dd->timesrc == ATC_TIMESRC_CRYSTAL)
 			ret = HZ;
 		else
@@ -144,17 +141,12 @@ static long atc_tod_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 		break;
 	case ATC_TOD_REQUEST_TICK_SIG: {
 		unsigned long sig = arg;
-		//if (copy_from_user(&sig, (void __user *)arg, sizeof(unsigned long)))
-		//	return -EFAULT;
 		if (!valid_signal(sig) || (dd->timesrc != ATC_TIMESRC_LINESYNC)) {
 			ret = -EINVAL;
 		} else {
 			dd->tick_sig_num = sig;
-			// perform equivalent of F_SETOWN fcntl
 			f_setown(filp, current->pid, 1);
-			// perform equivalent of F_SETSIG fcntl
 			filp->f_owner.signum = sig;
-			// use fasync_helper and tick_async_queue
 			if (fasync_helper(0, filp, 1, &dd->tick_async_queue) < 0) {
 				pr_debug("atc_tod_ioctl: tick sig err=%d\n", ret); 
 				ret = -EINVAL;
@@ -169,17 +161,12 @@ static long atc_tod_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 		break;
 	case ATC_TOD_REQUEST_ONCHANGE_SIG: {
 		unsigned long sig = arg;
-		//if (copy_from_user(&sig, (void __user *)arg, sizeof(unsigned long)))
-		//	return -EFAULT;
 		if (!valid_signal(sig)) {
 			ret = -EINVAL;
 		} else {
 			dd->onchange_sig_num = sig;
-			// perform equivalent of F_SETOWN fcntl
 			f_setown(filp, current->pid, 1);
-			// perform equivalent of F_SETSIG fcntl
 			filp->f_owner.signum = sig;
-			// use fasync_helper and onchange_async_queue
 			if (fasync_helper(0, filp, 1, &dd->onchange_async_queue) < 0) {
 				pr_debug("atc_tod_ioctl: onchange sig err=%d\n", ret); 
 				ret = -EINVAL;
@@ -203,7 +190,6 @@ static long atc_tod_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 static int atc_tod_open(struct inode *inode, struct file *filp)
 {
         filp->private_data = global_dev;
-
         return 0;
 }
 
@@ -211,14 +197,11 @@ static int atc_tod_close(struct inode *inode, struct file *filp)
 {
 	atc_tod_fasync(-1, filp, 0);
 	filp->private_data = NULL;
-
 	return 0;
 }
 
 static const struct file_operations atc_tod_fops = {
 	.owner = THIS_MODULE,
-/*	.read = atc_tod_read,
-	.write = atc_tod_write,*/
 	.open = atc_tod_open,
 	.release = atc_tod_close,
 	.unlocked_ioctl	= atc_tod_ioctl,
@@ -229,55 +212,54 @@ static void atc_tod_rtc_read(struct work_struct *work)
 {
 	struct atc_tod_data *dd = container_of(work, struct atc_tod_data, rtc_read_work);
 	struct rtc_device *rtc;
+	struct system_time_snapshot snapshot;
 	struct timespec ts;
-	struct rtc_time tm = {0};
-
-	if((dd->rtc_loaded == true) || (dd->rtc_errors > 5)) {
-		dd->rtc_loaded = true;
-		return;
-	}
+	struct rtc_time tm;
+	int old_sec = 0;
 
 	rtc = rtc_class_open("rtc0");
 	if(!rtc) {
 		pr_err("failed to open read rtc0\n");
-		dd->rtc_errors++;
-		return;
-	}
-
-	if(rtc_read_time(rtc, &tm) || rtc_valid_tm(&tm)) {
-		pr_err("failed to get RTC time\n");
-		rtc_class_close(rtc);
-		dd->rtc_tm.tm_sec = 0;
-		dd->rtc_errors++;
+		dd->rtc_read_complete = true;
 		return;
 	}
 
 	/* Look for a RTC second rollover */
-	if(dd->rtc_tm.tm_sec != 0 && (dd->rtc_tm.tm_sec != tm.tm_sec)) {
-		rtc_tm_to_time(&tm, &ts.tv_sec);
-		ts.tv_nsec = 0;
-		do_settimeofday(&ts);
-		pr_info("setting system clock to "
+	while(1) {
+		if(rtc_read_time(rtc, &tm) || rtc_valid_tm(&tm)) {
+			pr_err("failed to read rtc time\n");
+			rtc_class_close(rtc);
+			dd->rtc_read_complete = true;
+			return;
+		}
+		if((tm.tm_sec != old_sec) && (old_sec != 0)) {
+			rtc_tm_to_time(&tm, &ts.tv_sec);
+			do_settimeofday(&ts);
+			pr_info("setting system clock from rtc to "
 				"%d-%02d-%02d %02d:%02d:%02d UTC\n",
 				tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 				tm.tm_hour, tm.tm_min, tm.tm_sec);
-		dd->linesync_sync = false;
-		dd->rtc_sync = true;
-		dd->rtc_loaded = true;
-		dd->ts.tv_sec = 0;
-		dd->count = 0;
+			break;
+		}
+		old_sec = tm.tm_sec;
+		usleep_range(RTC_POLL_INTERVAL_MIN, RTC_POLL_INTERVAL_MAX);
 	}
-
-	dd->rtc_tm = tm;
 	rtc_class_close(rtc);
+	dd->rtc_read_complete = true;
+
+	/* Initialize the clock was set sequence */
+	ktime_get_snapshot(&snapshot);
+	dd->clock_was_set_seq = snapshot.clock_was_set_seq;
 }
 
 static void atc_tod_rtc_write(struct work_struct *work)
 {
+	//struct atc_tod_data *dd = container_of(work, struct atc_tod_data, rtc_write_work);
 	struct rtc_device *rtc;
-	struct timespec ts;
+	struct system_time_snapshot snapshot;
+	struct timespec64 ts_real;
 	struct rtc_time tm = {0};
-	long delay;
+	ktime_t future;
 	ktime_t timeout;
 
 	rtc = rtc_class_open("rtc0");
@@ -285,25 +267,25 @@ static void atc_tod_rtc_write(struct work_struct *work)
 		pr_err("failed to open write rtc0\n");
 		return;
 	}
-
-	getnstimeofday(&ts);
-	delay = RTC_UPDATE_DELAY - ts.tv_nsec;
-	if(delay <= 0) {
-		delay += 1000000000;
-		ts.tv_sec += 1;
-	}
-	rtc_time_to_tm(ts.tv_sec, &tm);
+	
+	ktime_get_snapshot(&snapshot);
+	ts_real = ktime_to_timespec64(snapshot.real);
+	ts_real.tv_sec++;
+	ts_real.tv_nsec = 1000000000 - RTC_UPDATE_DELAY;
+	future = timespec64_to_ktime(ts_real);
+	timeout = ktime_sub(future, snapshot.real);
+	rtc_time_to_tm(ts_real.tv_sec, &tm);
 	__set_current_state(TASK_UNINTERRUPTIBLE);
-	timeout = ktime_set(0, delay);
 	schedule_hrtimeout_range(&timeout, 1000, HRTIMER_MODE_REL);
 
-	if (rtc_set_time(rtc, &tm))
-		pr_err("rtc_set_time error\n");
-	else
+	if (rtc_set_time(rtc, &tm) == 0) {
 		pr_debug("setting rtc clock to "
-				"%d-%02d-%02d %02d:%02d:%02d UTC\n",
-				tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-				tm.tm_hour, tm.tm_min, tm.tm_sec);
+			"%d-%02d-%02d %02d:%02d:%02d UTC\n",
+			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+			tm.tm_hour, tm.tm_min, tm.tm_sec);
+	} else {
+		pr_err("rtc_set_time error\n");
+	}
 
 	rtc_class_close(rtc);
 }
@@ -312,79 +294,75 @@ static irqreturn_t atc_tod_irq_handler(int irq, void *data)
 {
 	struct atc_tod_data *dd = data;
 	struct pps_event_time ts;
-	long delta;
-	static unsigned long last_ts = 0;
-	unsigned long new_ts, interval;
-        
-	// Check that this is a genuine linesync irq of approx. 1/(2*pl_freq)
-	new_ts = jiffies;
-	if (dd->count) {
-		interval = ((new_ts - last_ts)*1000)/HZ;
-		if (interval < (900/(2*pl_freq))) {
-			pr_debug("Linesync short irq interval (%ld) skipped\n", interval);
-			return IRQ_HANDLED;
-		}
-	}
-	last_ts = new_ts;
-        
-	dd->count++;
+	struct system_time_snapshot snapshot;
+	ktime_t delta_ns;
+	int delta_ms;
 
-	if (unlikely(dd->rtc_loaded == false))
-		schedule_work(&dd->rtc_read_work);
-
-	if(dd->linesync_sync) {
-		if(dd->count % (dd->frequency * 2) == 0) {
-			/* Get the PPS time stamp first */
-			pps_get_ts(&ts);
-
-			if(dd->count >= (dd->frequency * 2 * RTC_SYNC_INTERVAL)) {
-				dd->count = 0;
-				schedule_work(&dd->rtc_write_work);
-			}
-
-			/* The new timestamp must be 1 second ahead with no more than 200ms error */
-			delta = 0;
-			if(ts.ts_real.tv_sec == dd->ts.tv_sec) {
-				delta = 1000000000 - ts.ts_real.tv_nsec - dd->ts.tv_nsec;
-			} else if(ts.ts_real.tv_sec == dd->ts.tv_sec + 1) {
-				delta = abs(ts.ts_real.tv_nsec - dd->ts.tv_nsec);
-			} else if(ts.ts_real.tv_sec == dd->ts.tv_sec + 2) {
-				delta = 1000000000 + ts.ts_real.tv_nsec - dd->ts.tv_nsec;
-			} else {
-				dd->linesync_sync = false;
-			}
-			dd->ts = ts.ts_real;
-
-			if(delta > 200000000)
-				dd->linesync_sync = false;
-			
-			/* send PPS assert if linesync_sync on second boundaries */
-			if(dd->linesync_sync) {
-				pps_event(dd->pps, &ts, PPS_CAPTUREASSERT, NULL);
-			} else {
-				dd->rtc_sync = false;
-				dd->ts.tv_sec = 0;
-				if (dd->onchange_async_queue != NULL)
-					kill_fasync(&dd->onchange_async_queue, SIGIO, POLL_IN);
-			}
-		}
-	} else {
-		pps_get_ts(&ts);
-		if((dd->rtc_loaded == true) && (dd->ts.tv_sec != 0) && (ts.ts_real.tv_sec != dd->ts.tv_sec)) {
-			pps_event(dd->pps, &ts, PPS_CAPTUREASSERT, NULL);
-			dd->linesync_sync = true;
-			dd->count = 0;
-			if(dd->rtc_sync == false) {
-				dd->rtc_sync = true;
-				schedule_work(&dd->rtc_write_work);
-			}
-			pr_info("linesync pps synchronized with second\n");			
-		}
-		dd->ts = ts.ts_real;
-	}
-
-	if (dd->tick_async_queue != NULL)
+	if (dd->tick_async_queue != NULL) {
 		kill_fasync(&dd->tick_async_queue, SIGIO, POLL_IN);
+	}
+	
+	dd->count++;
+	if(dd->count >= dd->frequency * 2) {
+		dd->count = 0;
+			
+		/* Get interrupt timestamp */
+		ktime_get_snapshot(&snapshot);
+
+		/* Check for time step */
+		if(snapshot.clock_was_set_seq != dd->clock_was_set_seq) {
+			dd->clock_was_set_seq = snapshot.clock_was_set_seq;
+			dd->pps_aligned = false;
+			dd->rtc_sync_seconds = 0;
+			ts.ts_real = ktime_to_timespec64(snapshot.real);
+			dd->old_second = ts.ts_real.tv_sec;
+			if (dd->onchange_async_queue != NULL) {
+				kill_fasync(&dd->onchange_async_queue, SIGIO, POLL_IN);
+			}
+			queue_work(dd->workqueue, &dd->rtc_write_work);
+		}
+
+		/* Send PPS assert event if aligned */
+		if(dd->pps_aligned && dd->frequency_locked) {
+			ts.ts_real = ktime_to_timespec64(snapshot.real);
+			pps_event(dd->pps, &ts, PPS_CAPTUREASSERT, NULL);
+		}
+
+		/* Compare timestamps if we are measuring frequency */
+		if(!dd->frequency_locked) {
+			if(dd->raw) {
+				delta_ns = ktime_sub(snapshot.raw, dd->raw);
+				delta_ms = (int)ktime_to_ms(delta_ns);
+				if(delta_ms > 1150 && delta_ms < 1250) {
+					dd->frequency = 50;
+				}
+				dd->frequency_locked = true;
+				pr_info( "atc_tod: linesync freq locked %dHz (%d)\n",
+					dd->frequency, delta_ms);
+			}
+			dd->raw = snapshot.raw;
+		}
+
+		/* check for RTC write interval */
+		if(dd->rtc_sync_seconds >= RTC_SYNC_SECONDS) {
+			dd->rtc_sync_seconds = 0;
+			queue_work(dd->workqueue, &dd->rtc_write_work);
+		}
+		dd->rtc_sync_seconds++;
+	}
+
+	/* Realign linesync PPS if necessary */
+	if(dd->rtc_read_complete && dd->frequency_locked && !dd->pps_aligned) {
+		ktime_get_snapshot(&snapshot);
+		ts.ts_real = ktime_to_timespec64(snapshot.real);
+		if((dd->old_second != 0) && (ts.ts_real.tv_sec != dd->old_second)) {
+			pps_event(dd->pps, &ts, PPS_CAPTUREASSERT, NULL);
+			dd->pps_aligned = true;
+			dd->count = 0;
+			pr_info("linesync pps re-aligned with second\n");
+		}
+		dd->old_second = ts.ts_real.tv_sec;
+	}
 
 	return IRQ_HANDLED;
 }
@@ -394,7 +372,6 @@ static int atc_tod_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct atc_tod_data *data;
-	const char *gpio_label;
 	int ret;
 	int pps_default_params;
 
@@ -414,24 +391,27 @@ static int atc_tod_probe(struct platform_device *pdev)
 		return ret;
 	}
 	data->gpio_pin = ret;
-	gpio_label = "atc-linesync";
-
-	INIT_WORK(&data->rtc_read_work, atc_tod_rtc_read);
-	INIT_WORK(&data->rtc_write_work, atc_tod_rtc_write);
 
 	/* Initialize variables */
-	data->frequency = pl_freq;
-	data->linesync_sync = false;
+	data->frequency = 60;
+	data->frequency_locked = false;
+	data->old_second = 0;
+	data->raw = 0;
 	data->count = 0;
-	data->ts.tv_sec = 0;
 	data->tick_async_queue = NULL;
 	data->onchange_async_queue = NULL;
 	data->tick_sig_num = 0;
 	data->onchange_sig_num = 0;
-	data->rtc_sync = false;
-	data->rtc_loaded = false;
-	data->rtc_errors = 0;
-	data->rtc_tm.tm_sec = 0;
+	data->pps_aligned = false;
+	data->rtc_read_complete = false;
+	data->rtc_sync_seconds = 0;
+	data->clock_was_set_seq = 0;
+
+	/* Setup atc-tod specific workqueue */
+	data->workqueue = create_singlethread_workqueue("atc-tod");
+	INIT_WORK(&data->rtc_read_work, atc_tod_rtc_read);
+	INIT_WORK(&data->rtc_write_work, atc_tod_rtc_write);
+	queue_work(data->workqueue, &data->rtc_read_work);
 
 	/* setup ioctl handling */
 	data->miscdev.minor = MISC_DYNAMIC_MINOR;
@@ -440,7 +420,7 @@ static int atc_tod_probe(struct platform_device *pdev)
 	ret = misc_register(&data->miscdev);
 
 	/* GPIO setup */
-	ret = devm_gpio_request(&pdev->dev, data->gpio_pin, gpio_label);
+	ret = gpio_request(data->gpio_pin, "atc-linesync");
 	if (ret) {
 		dev_err(&pdev->dev, "failed to request GPIO %u\n",
 			data->gpio_pin);
@@ -453,11 +433,12 @@ static int atc_tod_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
+
 	/* IRQ setup */
-	ret = of_irq_to_resource(np, 0, NULL);
-	if (ret < 0) {
-		ret = gpio_to_irq(data->gpio_pin);
-		if (ret < 0) {
+	ret = gpio_to_irq(data->gpio_pin);
+	if (ret <= 0) {
+		ret = of_irq_to_resource(np, 0, NULL);
+		if (ret <= 0) {
 			dev_err(&pdev->dev, "failed to map GPIO to IRQ: %d\n", ret);
 			return -EINVAL;
 		}
@@ -493,6 +474,7 @@ static int atc_tod_probe(struct platform_device *pdev)
 	dev_info(data->pps->dev, "Registered IRQ %d as PPS source\n",
 		 data->irq);
 
+
 	return 0;
 }
 
@@ -500,8 +482,10 @@ static int atc_tod_remove(struct platform_device *pdev)
 {
 	struct atc_tod_data *data = platform_get_drvdata(pdev);
 
+	destroy_workqueue(data->workqueue);
 	free_irq(data->irq, data);
 	pps_unregister_source(data->pps);
+	gpio_free(data->gpio_pin);
 	misc_deregister(&data->miscdev);
 	dev_info(&pdev->dev, "removed IRQ %d as PPS source\n", data->irq);
 	return 0;
@@ -509,7 +493,7 @@ static int atc_tod_remove(struct platform_device *pdev)
 
 static const struct of_device_id atc_tod_dt_ids[] = {
 	{ .compatible = "linux,atc-tod", },
-	{ /* sentinel */ }
+	{ }
 };
 MODULE_DEVICE_TABLE(of, atc_tod_dt_ids);
 
@@ -523,7 +507,19 @@ static struct platform_driver atc_tod_driver = {
 	},
 };
 
-module_platform_driver(atc_tod_driver);
+static int __init atc_tod_init(void)
+{
+	return platform_driver_register(&atc_tod_driver);
+}
+
+static void __exit atc_tod_exit(void)
+{
+	platform_driver_unregister(&atc_tod_driver);
+}
+
+late_initcall(atc_tod_init); /* allow rtc driver init first */
+module_exit(atc_tod_exit);
+
 MODULE_DESCRIPTION("ATC platform time-of-day handler");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0.0");
