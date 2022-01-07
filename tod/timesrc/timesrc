@@ -4,7 +4,7 @@ usage() {
 	echo "timesrc version 1.0 - Copyright (C) 2015 Intelight Inc."
 	echo ""
 	echo "usage:   timesrc - print current time source"
-	echo "         timesrc <name> - set current time source [LINESYNC/RTC_SQUARE_WAVE/CRYSTAL]"
+	echo "         timesrc <name> - set current time source [LINESYNC/RTCSQWR/CRYSTAL]"
 	echo "         timesrc EXTERNAL1 <port> - set GPS time source for serial port"
 	echo "         timesrc EXTERNAL2 <hostname> - set NTP time source"
 }
@@ -12,6 +12,8 @@ usage() {
 currentSource() { 
 	if grep -q LSYN /etc/chrony.conf; then
 		echo "Current timesrc is LINESYNC(0)"
+	elif grep -q RTC /etc/chrony.conf; then
+		echo "Current timesrc is RTCSQWR(1)"
 	elif grep -q GPS /etc/chrony.conf; then
 		echo "Current timesrc is EXTERNAL1(3)"
 	elif grep -q server /etc/chrony.conf; then
@@ -24,13 +26,17 @@ currentSource() {
 setSource() {
 	currentSource
 
-	sed -i '/LSYN/d;/GPS/d;/server/d' /etc/chrony.conf
+	sed -i '/LSYN/d;/RTC/d;/GPS/d;/server/d' /etc/chrony.conf
 	sed -i '/export DEVICES=/c\export DEVICES=""' /etc/gpsd.conf	
 
 	case "$1" in
 		LINESYNC)
 			echo "setting timesrc to LINESYNC(0)"
-			sed -i '1s|^|refclock PPS /dev/pps0 maxdispersion 0.01 refid LSYN\n|' /etc/chrony.conf
+			sed -i '1s|^|refclock PPS /dev/pps0 poll 2 filter 16 refid LSYN\n|' /etc/chrony.conf
+			;;
+		RTCSQWR)
+			echo "setting timesrc to RTCSQWR(1)"
+			sed -i '1s|^|refclock PPS /dev/pps1 poll 2 filter 16 refid RTC\n|' /etc/chrony.conf
 			;;
 		CRYSTAL)
 			echo "setting timesrc to CRYSTAL(2)"
@@ -61,7 +67,7 @@ if [ "$#" = "0" ]; then
 fi
 
 case "$1" in
-	LINESYNC|CRYSTAL)
+	LINESYNC|RTCSQWR|CRYSTAL)
 		setSource $1
 		;;
 	EXTERNAL1|EXTERNAL2)
@@ -71,10 +77,6 @@ case "$1" in
 			exit 1
 		fi
 		setSource $1 $2
-		;;
-	RTC_SQUARE_WAVE)
-		echo "RTC_SQUARE_WAVE is unsupported"
-		exit 1
 		;;
 	--help)
 		usage
