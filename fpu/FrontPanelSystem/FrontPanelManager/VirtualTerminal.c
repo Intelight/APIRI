@@ -1268,6 +1268,7 @@ void load_screen( int fd, int term )
 	xprintf( fd, ESC "[?7%c",  hl( disp->screen.auto_wrap ) );
 	xprintf( fd, ESC "[?8%c",  hl( disp->screen.auto_repeat ) );
 	xprintf( fd, ESC "[<47%c", hl( disp->screen.auto_scroll ) );
+	xprintf( fd, ESC "[<%dS", disp->screen.backlight_timeout );
 
 	// set cursor attributes and position
 	xprintf( fd, ESC "[?25%c", hl( disp->cursor.visible ) );
