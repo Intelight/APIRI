@@ -22,6 +22,7 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/notifier.h>
+#include <linux/completion.h>
 #include <linux/pvclock_gtod.h>
 #include <linux/ktime.h>
 #include <linux/module.h>
@@ -54,13 +55,7 @@ MODULE_PARM_DESC(timesrc, "ATC Time Source Name");
 #define RTC_LOCKOUT_SEC 16
 
 /* The tolerated rtc offset before the rtc is trimmed */
-#define RTC_TRIM_TOLERANCE_NS 3000000L
-
-/* Read the RTC on the second rtc square wave cycle and
- * set the linux system clock on the third cycle
- */
-#define RTC_INITIAL_READ_CYCLE 1
-#define RTC_INITIAL_SET_CYCLE 2
+#define RTC_TRIM_TOLERANCE_NS 1000000L
 
 struct atc_pps_data {
 	int irq;
@@ -76,13 +71,16 @@ struct atc_tod_data {
 	int linesync_frequency;
 	bool linesync_frequency_locked;
 	bool rtc_initialized;
-	int rtc_count;
+	bool rtc_skipped_first_irq;
+	bool rtc_level;
 	int rtc_lockout_seconds;
 	bool rtc_write_request;
 	struct timespec rtc_initial_ts;
 	struct workqueue_struct *workqueue;
 	struct work_struct rtc_read_work;
 	struct work_struct rtc_write_work;
+	struct completion rtc_sqwr_ready;
+	bool rtc_read_worker_ready;
 	struct miscdevice miscdev;
 	struct fasync_struct *tick_async_queue;
 	struct fasync_struct *onchange_async_queue;
@@ -90,9 +88,12 @@ struct atc_tod_data {
 	int onchange_sig_num;
 	struct timespec raw;
 	int timesrc;
+	unsigned int clock_step_seq;
 	bool clock_step;
 	bool detect_clock_step;
+	int pwrdn_active_count;
 	struct notifier_block clock_step_notifier;
+	struct notifier_block atc_pwrdn_notifier;
 };
 
 static struct atc_tod_data *global_dev;
@@ -237,9 +238,29 @@ static int atc_tod_clock_step(struct notifier_block *self, unsigned long action,
 	/* This may be called in an unknown context so, just set variables */
 	if(action && dd->detect_clock_step) {
 		dd->clock_step = true;
+		dd->clock_step_seq++;
 		dd->linesync_aligned = false;
 		dd->rtc_write_request = true;
 	}
+	return NOTIFY_OK;
+}
+
+static int atc_tod_pwrdn(struct notifier_block *self, unsigned long action, void *dev)
+{
+	struct atc_tod_data *dd = container_of(self, struct atc_tod_data, atc_pwrdn_notifier);
+
+	/* on powerdown lockout rtc writes for a timeout or until cleared.
+	 * There is a bad corner case dring rtc writes where we stop the
+	 * rtc write, then start.  If the power cut occurs during this
+	 * write the rtc will be wrong.  The action function parameter is
+	 * false when powerdown is active.
+	 */
+	if(action) {
+		dd->pwrdn_active_count = 0;
+	} else {
+		dd->pwrdn_active_count = 3; /* one and half sec lockout */
+	}
+
 	return NOTIFY_OK;
 }
 
@@ -256,6 +277,12 @@ static void atc_tod_rtc_read(struct work_struct *work)
 		return;
 	}
 
+	/* Let rtc IRQ know that the read worker is ready and then wait for
+	 * the next rtc interrupt
+	 */
+	dd->rtc_read_worker_ready = true;
+	wait_for_completion(&dd->rtc_sqwr_ready);
+
 	if(rtc_read_time(rtc, &tm) || rtc_valid_tm(&tm)) {
 		pr_err("atc-tod: failed to read rtc time\n");
 		rtc_class_close(rtc);
@@ -263,10 +290,21 @@ static void atc_tod_rtc_read(struct work_struct *work)
 		return;
 	}
 
-	// prepare rtc initial_ts to be set on the rtc second interrupt
+	// prepare rtc initial_ts to be set on the next rtc half-second interrupt
 	rtc_tm_to_time(&tm, &dd->rtc_initial_ts.tv_sec);
-	dd->rtc_initial_ts.tv_sec++;
 	rtc_class_close(rtc);
+
+	/* If the rtc square wave is high then this work was triggered on the
+	 * top of the second in which case the next IRQ will hit at the half
+	 * second.  If rtc_level is low the next IRQ will hit at the next full
+	 * second.
+	 */ 
+	pr_info("atc-tod: rtc read sqwr: %d\n", dd->rtc_level);
+	if(dd->rtc_level) {
+		dd->rtc_initial_ts.tv_nsec = 500000000L;
+	} else {
+		dd->rtc_initial_ts.tv_sec++;
+	}
 }
 
 static void atc_tod_rtc_write(struct work_struct *work)
@@ -277,6 +315,7 @@ static void atc_tod_rtc_write(struct work_struct *work)
 	struct rtc_time tm = {0};
 	ktime_t now;
 	ktime_t timeout;
+	unsigned int clock_step_seq;
 
 	rtc = rtc_class_open("rtc0");
 	if(!rtc) {
@@ -290,16 +329,33 @@ static void atc_tod_rtc_write(struct work_struct *work)
 	ts_real.tv_nsec = 1000000000L - RTC_UPDATE_DELAY + RTC_TWEAK_DELAY;
 	rtc_time_to_tm(ts_real.tv_sec, &tm);
 	timeout = ktime_sub(timespec_to_ktime(ts_real), now);
+	clock_step_seq = dd->clock_step_seq;
 	usleep_range(ktime_to_us(timeout) - 100, ktime_to_us(timeout) + 100);
 
-	if (rtc_set_time(rtc, &tm) == 0) {
-		pr_debug("atc-tod: setting rtc clock to "
-			"%d-%02d-%02d %02d:%02d:%02d UTC\n",
-			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-			tm.tm_hour, tm.tm_min, tm.tm_sec);
-	} else {
-		pr_err("atc-tod: rtc_set_time error\n");
+	if(clock_step_seq != dd->clock_step_seq) {
+		pr_err("atc-tod: clock step during rtc write\n");
+		dd->rtc_write_request = true;
+		rtc_class_close(rtc);
+		return;
 	}
+
+	if(dd->pwrdn_active_count) {
+		pr_err("atc-tod: pwrdn active during rtc write\n");
+		dd->rtc_write_request = true;
+		rtc_class_close(rtc);
+		return;
+	}
+
+	if (rtc_set_time(rtc, &tm) != 0) {
+		pr_err("atc-tod: rtc_set_time error\n");
+		rtc_class_close(rtc);
+		return;
+	}
+
+	pr_debug("atc-tod: setting rtc clock to "
+		"%d-%02d-%02d %02d:%02d:%02d UTC\n",
+		tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+		tm.tm_hour, tm.tm_min, tm.tm_sec);
 
 	rtc_class_close(rtc);
 }
@@ -313,18 +369,24 @@ static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
 	ktime_t delta_ns;
 	long tolerance_ns;
 	int delta_ms;
+	int level;
 
-	/* Interrupt is triggered on falling edge only */
-	dd->linesync_count++;
+	/* Get the real timestamp */
+	getnstimeofday(&ts_real);
 
 	/* send user space linesync tick signal */
 	if (dd->tick_async_queue != NULL) {
 		kill_fasync(&dd->tick_async_queue, SIGIO, POLL_IN);
 	}
 
+	level = gpio_get_value(dd->linesync.pin);
+	if(!level) {
+		/* count linesync cycles on falling edge only */
+		dd->linesync_count++;
+	}
+
 	/* Realign linesync PPS if necessary */
-	if(dd->rtc_initialized && dd->linesync_frequency_locked && !dd->linesync_aligned) {
-		getnstimeofday(&ts_real);
+	if(!level && dd->rtc_initialized && dd->linesync_frequency_locked && !dd->linesync_aligned) {
 		tolerance_ns = (500000000L / dd->linesync_frequency) + 500000L;
 
 		if((ts_real.tv_nsec < tolerance_ns) || (ts_real.tv_nsec > (1000000000L - tolerance_ns))) {
@@ -334,11 +396,10 @@ static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
 		}
 	}
 
-	if(dd->linesync_count >= dd->linesync_frequency) {
+	if(!level && (dd->linesync_count >= dd->linesync_frequency)) {
 		dd->linesync_count = 0;
 
-		/* Get monotonic and real timestamp */
-		getnstimeofday(&ts_real);
+		/* Get monotonic timestamp for measuring linesync frequency */
 		getrawmonotonic(&ts_raw);
 
 		/* Send PPS assert event if aligned */
@@ -371,20 +432,25 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 	struct atc_tod_data *dd = data;
 	struct pps_event_time ts;
 	struct timespec ts_real;
-	int level;
 
 	getnstimeofday(&ts_real);
 
+	/* The first rtc sqwr IRQ edge is sometimes invalid */
+	if(!dd->rtc_skipped_first_irq) {
+		dd->rtc_skipped_first_irq = true;
+		return IRQ_HANDLED;
+	}
+
 	if(dd->clock_step) {
-		pr_debug("atc-dot: clock step\n");
+		pr_debug("atc-tod: clock step\n");
 		dd->clock_step = false;
 		if (dd->onchange_async_queue != NULL) {
 			kill_fasync(&dd->onchange_async_queue, SIGIO, POLL_IN);
 		}
 	}
 
-	level = gpio_get_value(dd->rtc.pin);
-	if(level) {
+	dd->rtc_level = gpio_get_value(dd->rtc.pin);
+	if(dd->rtc_level) {
 		ts.ts_real = ts_real;
 		pps_event(dd->rtc.pps, &ts, PPS_CAPTUREASSERT, NULL);
 
@@ -417,17 +483,23 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 		}
 	}
 
-	if(level && !dd->rtc_initialized) {
-		if(dd->rtc_count == RTC_INITIAL_READ_CYCLE) {
-			queue_work(dd->workqueue, &dd->rtc_read_work);
-		} else if(dd->rtc_count == RTC_INITIAL_SET_CYCLE && dd->rtc_initial_ts.tv_sec > 0) {
+	/* Run the rtc read work on the first second or half second rtc edge
+	 * The rtc read work item will look at the rtc_level and configure 
+	 * rtc_initial_ts to the appropriate value for the next half sec IRQ
+	 */
+	if(!dd->rtc_initialized) {
+		if(dd->rtc_initial_ts.tv_sec > 0) {
 			do_settimeofday(&dd->rtc_initial_ts);
 			dd->rtc_initialized = true;
-			pr_info("atc-tod: rtc settimeofday\n");
+			pr_info("atc-tod: rtc read settimeofday\n");
+		} else if(dd->rtc_read_worker_ready) {
+			complete(&dd->rtc_sqwr_ready);
 		}
-		if(dd->rtc_count < RTC_INITIAL_SET_CYCLE) {
-			dd->rtc_count++;
-		}
+	}
+
+	/* Automatically clear pwrdn active after a short timeout */
+	if(dd->pwrdn_active_count > 0) {
+		dd->pwrdn_active_count--;
 	}
 
 	return IRQ_HANDLED;
@@ -516,10 +588,12 @@ static int atc_tod_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	/* Setup atc-tod specific workqueue */
-	dd->workqueue = create_singlethread_workqueue("atc-tod");
+	/* Setup rtc workqueue and start the rtc_read_work */
+	init_completion(&dd->rtc_sqwr_ready);
+	dd->workqueue = alloc_workqueue("atc-tod", WQ_HIGHPRI, 0);
 	INIT_WORK(&dd->rtc_read_work, atc_tod_rtc_read);
 	INIT_WORK(&dd->rtc_write_work, atc_tod_rtc_write);
+	queue_work(dd->workqueue, &dd->rtc_read_work);
 
 	/* Setup ioctl handling */
 	dd->miscdev.minor = MISC_DYNAMIC_MINOR;
@@ -528,7 +602,7 @@ static int atc_tod_probe(struct platform_device *pdev)
 	misc_register(&dd->miscdev);
 
 	/* Enable linesync interrupt handler on falling edge only */
-	ret = request_irq(dd->linesync.irq, atc_tod_linesync_irq_handler, IRQF_TRIGGER_FALLING, "atc-linesync", dd);
+	ret = request_irq(dd->linesync.irq, atc_tod_linesync_irq_handler, 0, "atc-linesync", dd);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to acquire IRQ %d\n", dd->linesync.irq);
 		return -EINVAL;
@@ -549,6 +623,14 @@ static int atc_tod_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
+	/* Register power down notifier */
+	dd->atc_pwrdn_notifier.notifier_call = atc_tod_pwrdn;
+	ret = atc_pwrdn_register_notifier(&dd->atc_pwrdn_notifier);
+	if(ret) {
+		dev_err(&pdev->dev, "failed to register pwrdn notifier\n");
+		return -EINVAL;
+	}
+
 	platform_set_drvdata(pdev, dd);
 	return 0;
 }
@@ -564,6 +646,7 @@ static int atc_tod_remove(struct platform_device *pdev)
 {
 	struct atc_tod_data *dd = platform_get_drvdata(pdev);
 
+	atc_pwrdn_unregister_notifier(&dd->atc_pwrdn_notifier);
 	pvclock_gtod_unregister_notifier(&dd->clock_step_notifier);
 	misc_deregister(&dd->miscdev);
 	destroy_workqueue(dd->workqueue);
