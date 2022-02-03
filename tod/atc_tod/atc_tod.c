@@ -99,6 +99,7 @@ struct atc_tod_data {
 	int pwrdn_active_count;
 	struct notifier_block clock_step_notifier;
 	struct notifier_block atc_pwrdn_notifier;
+	spinlock_t lock;
 };
 
 static struct atc_tod_data *global_dev;
@@ -116,8 +117,9 @@ static long atc_tod_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 	unsigned long size;
 	int ret = 0;
 	char *timesrc_str = NULL;
+	unsigned long flags;
 
-	// lock structures
+	spin_lock_irqsave(&dd->lock, flags);
 	size = (cmd & IOCSIZE_MASK) >> IOCSIZE_SHIFT;
 	if (cmd & IOC_IN) {
 		if (!access_ok(VERIFY_READ, (void __user *)arg, size))
@@ -209,7 +211,8 @@ static long atc_tod_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 	default:
 		ret = -ENOTTY;
 	}
-	// unlock structures
+
+	spin_unlock_irqrestore(&dd->lock, flags);
 	pr_debug("atc-tod: ioctl cmd=%x arg=%x ret=%d\n", (int)cmd, (int)arg, ret);
 	return ret;
 }
@@ -238,9 +241,11 @@ static const struct file_operations atc_tod_fops = {
 static int atc_tod_clock_step(struct notifier_block *self, unsigned long action, void *dev)
 {
 	struct atc_tod_data *dd = container_of(self, struct atc_tod_data, clock_step_notifier);
+	unsigned long flags;
 
 	/* action is true if the clock was stepped. */
 	/* This may be called in an unknown context so, just set variables */
+	spin_lock_irqsave(&dd->lock, flags);
 	if(action && dd->detect_clock_step) {
 		dd->clock_step_seq++;
 		dd->linesync_aligned = false;
@@ -250,14 +255,15 @@ static int atc_tod_clock_step(struct notifier_block *self, unsigned long action,
 		if (dd->onchange_async_queue != NULL) {
 			kill_fasync(&dd->onchange_async_queue, SIGIO, POLL_IN);
 		}
-		return NOTIFY_OK;
 	}
+	spin_unlock_irqrestore(&dd->lock, flags);
 	return NOTIFY_OK;
 }
 
 static int atc_tod_pwrdn(struct notifier_block *self, unsigned long action, void *dev)
 {
 	struct atc_tod_data *dd = container_of(self, struct atc_tod_data, atc_pwrdn_notifier);
+	unsigned long flags;
 
 	/* on powerdown lockout rtc writes for a timeout or until cleared.
 	 * There is a bad corner case dring rtc writes where we stop the
@@ -265,11 +271,13 @@ static int atc_tod_pwrdn(struct notifier_block *self, unsigned long action, void
 	 * write the rtc will be wrong.  The action function parameter is
 	 * false when powerdown is active.
 	 */
+	spin_lock_irqsave(&dd->lock, flags);
 	if(action) {
 		dd->pwrdn_active_count = 0;
 	} else {
 		dd->pwrdn_active_count = 3; /* one and half sec lockout */
 	}
+	spin_unlock_irqrestore(&dd->lock, flags);
 
 	return NOTIFY_OK;
 }
@@ -279,11 +287,14 @@ static void atc_tod_rtc_read(struct work_struct *work)
 	struct atc_tod_data *dd = container_of(work, struct atc_tod_data, rtc_read_work);
 	struct rtc_device *rtc;
 	struct rtc_time tm;
+	unsigned long flags;
 
+	spin_lock_irqsave(&dd->lock, flags);
 	rtc = rtc_class_open("rtc0");
 	if(!rtc) {
-		pr_err("atc-tod: failed to open rtc0\n");
 		dd->rtc_initialized = true;
+		spin_unlock_irqrestore(&dd->lock, flags);
+		pr_err("atc-tod: failed to open rtc0\n");
 		return;
 	}
 
@@ -291,18 +302,23 @@ static void atc_tod_rtc_read(struct work_struct *work)
 	 * the next rtc interrupt
 	 */
 	dd->rtc_read_worker_ready = true;
+	spin_unlock_irqrestore(&dd->lock, flags);
+
 	wait_for_completion(&dd->rtc_sqwr_ready);
 
 	if(rtc_read_time(rtc, &tm) || rtc_valid_tm(&tm)) {
-		pr_err("atc-tod: failed to read rtc time\n");
-		rtc_class_close(rtc);
+		spin_lock_irqsave(&dd->lock, flags);
 		dd->rtc_initialized = true;
+		spin_unlock_irqrestore(&dd->lock, flags);
+		rtc_class_close(rtc);
+		pr_err("atc-tod: failed to read rtc time\n");
 		return;
 	}
+	rtc_class_close(rtc);
 
 	// prepare rtc initial_ts to be set on the next rtc half-second interrupt
+	spin_lock_irqsave(&dd->lock, flags);
 	rtc_tm_to_time(&tm, &dd->rtc_initial_ts.tv_sec);
-	rtc_class_close(rtc);
 
 	/* If the rtc square wave is high then this work was triggered on the
 	 * top of the second in which case the next IRQ will hit at the half
@@ -315,6 +331,7 @@ static void atc_tod_rtc_read(struct work_struct *work)
 	} else {
 		dd->rtc_initial_ts.tv_sec++;
 	}
+	spin_unlock_irqrestore(&dd->lock, flags);
 }
 
 static void atc_tod_rtc_write(struct work_struct *work)
@@ -327,6 +344,7 @@ static void atc_tod_rtc_write(struct work_struct *work)
 	unsigned long real_us;
 	unsigned long delay_us;
 	unsigned int clock_step_seq;
+	unsigned long flags;
 
 	rtc = rtc_class_open("rtc0");
 	if(!rtc) {
@@ -335,45 +353,52 @@ static void atc_tod_rtc_write(struct work_struct *work)
 	}
 
 	getnstimeofday(&ts_real);
+	spin_lock_irqsave(&dd->lock, flags);
+
 	real_us = ts_real.tv_nsec/1000L;
 	if(real_us > (RTC_WRITE_POINT_US - 1)) {
-		pr_err("atc-tod: rtc write missed window %lu\n", (real_us - RTC_WRITE_POINT_US));
 		dd->rtc_write_request = true;
+		spin_unlock_irqrestore(&dd->lock, flags);
 		rtc_class_close(rtc);
+		pr_err("atc-tod: rtc write missed window %lu\n", (real_us - RTC_WRITE_POINT_US));
 		return;
 	}
 	delay_us = RTC_WRITE_POINT_US - real_us;
 	clock_step_seq = dd->clock_step_seq;
+	spin_unlock_irqrestore(&dd->lock, flags);
 
 	usleep_range(delay_us - 1, delay_us + 1);
 
+	spin_lock_irqsave(&dd->lock, flags);
 	if(clock_step_seq != dd->clock_step_seq) {
-		pr_err("atc-tod: clock step during rtc write\n");
 		dd->rtc_write_request = true;
+		spin_unlock_irqrestore(&dd->lock, flags);
 		rtc_class_close(rtc);
+		pr_err("atc-tod: clock step during rtc write\n");
 		return;
 	}
 
 	if(dd->pwrdn_active_count) {
-		pr_err("atc-tod: pwrdn active during rtc write\n");
 		dd->rtc_write_request = true;
+		spin_unlock_irqrestore(&dd->lock, flags);
 		rtc_class_close(rtc);
+		pr_err("atc-tod: pwrdn active during rtc write\n");
 		return;
 	}
+	spin_unlock_irqrestore(&dd->lock, flags);
 
 	rtc_time_to_tm(ts_real.tv_sec, &tm);
 	if (rtc_set_time(rtc, &tm) != 0) {
-		pr_err("atc-tod: rtc_set_time error\n");
 		rtc_class_close(rtc);
+		pr_err("atc-tod: rtc_set_time error\n");
 		return;
 	}
 
+	rtc_class_close(rtc);
 	pr_debug("atc-tod: setting rtc clock to "
 		"%d-%02d-%02d %02d:%02d:%02d UTC %lu\n",
 		tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 		tm.tm_hour, tm.tm_min, tm.tm_sec, delay_us);
-
-	rtc_class_close(rtc);
 }
 
 static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
@@ -386,9 +411,11 @@ static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
 	long tolerance_ns;
 	int delta_ms;
 	int level;
+	unsigned long flags;
 
 	/* Get the real timestamp */
 	getnstimeofday(&ts_real);
+	spin_lock_irqsave(&dd->lock, flags);
 
 	/* send user space linesync tick signal */
 	if (dd->tick_async_queue != NULL) {
@@ -440,6 +467,7 @@ static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
 		}
 	}
 
+	spin_unlock_irqrestore(&dd->lock, flags);
 	return IRQ_HANDLED;
 }
 
@@ -448,20 +476,24 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 	struct atc_tod_data *dd = data;
 	struct pps_event_time ts;
 	struct timespec ts_real;
+	struct timespec rtc_ts;
 	unsigned long real_us;
 	unsigned long scheduled_us;
 	unsigned long delay_jiffies;
 	bool level;
+	unsigned long flags;
 
 	getnstimeofday(&ts_real);
-	level = gpio_get_value(dd->rtc.pin);
+	spin_lock_irqsave(&dd->lock, flags);
 
 	/* The first rtc sqwr IRQ edge is sometimes invalid */
 	if(!dd->rtc_skipped_first_irq) {
 		dd->rtc_skipped_first_irq = true;
+		spin_unlock_irqrestore(&dd->lock, flags);
 		return IRQ_HANDLED;
 	}
 
+	level = gpio_get_value(dd->rtc.pin);
 	if(level) {
 		ts.ts_real = ts_real;
 		pps_event(dd->rtc.pps, &ts, PPS_CAPTUREASSERT, NULL);
@@ -512,7 +544,7 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 	/* Start iniitial rtc read request when worker is ready */
 	if(!dd->rtc_initialized && dd->rtc_read_worker_ready && dd->rtc_initial_ts.tv_sec == 0) {
 		dd->rtc_level = level;
-		//spin_unlock_irq(&dd->lock);
+		spin_unlock_irqrestore(&dd->lock, flags);
 		complete(&dd->rtc_sqwr_ready);
 		return IRQ_HANDLED;
 	}
@@ -523,12 +555,14 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 	 */
 	if(!dd->rtc_initialized && dd->rtc_initial_ts.tv_sec > 0) {
 		dd->rtc_initialized = true;
-		//spin_unlock_irq(&dd->lock);
-		do_settimeofday(&dd->rtc_initial_ts);
+		rtc_ts = dd->rtc_initial_ts;
+		spin_unlock_irqrestore(&dd->lock, flags);
+		do_settimeofday(&rtc_ts);
 		pr_info("atc-tod: rtc read settimeofday\n");
 		return IRQ_HANDLED;
 	}
 
+	spin_unlock_irqrestore(&dd->lock, flags);
 	return IRQ_HANDLED;
 }
 
@@ -599,6 +633,7 @@ static int atc_tod_probe(struct platform_device *pdev)
 
 	/* assign device structure to a global poiner */
 	global_dev = dd;
+	spin_lock_init(&dd->lock);
 
 	/* Initialize non-zero parameters */
 	dd->linesync_frequency = 60;
