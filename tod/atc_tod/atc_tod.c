@@ -410,7 +410,6 @@ static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
 	ktime_t delta_ns;
 	long tolerance_ns;
 	int delta_ms;
-	int level;
 	unsigned long flags;
 
 	/* Get the real timestamp */
@@ -422,24 +421,20 @@ static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
 		kill_fasync(&dd->tick_async_queue, SIGIO, POLL_IN);
 	}
 
-	level = gpio_get_value(dd->linesync.pin);
-	if(!level) {
-		/* count linesync cycles on falling edge only */
-		dd->linesync_count++;
-	}
+	dd->linesync_count++;
 
 	/* Realign linesync PPS if necessary */
-	if(!level && dd->rtc_initialized && dd->linesync_frequency_locked && !dd->linesync_aligned) {
-		tolerance_ns = (500000000L / dd->linesync_frequency) + 500000L;
+	if(dd->rtc_initialized && dd->linesync_frequency_locked && !dd->linesync_aligned) {
+		tolerance_ns = (500000000L / 2 / dd->linesync_frequency) + 500000L;
 
 		if((ts_real.tv_nsec < tolerance_ns) || (ts_real.tv_nsec > (1000000000L - tolerance_ns))) {
 			dd->linesync_aligned = true;
-			dd->linesync_count = dd->linesync_frequency;
+			dd->linesync_count = dd->linesync_frequency * 2;
 			pr_debug("atc-tod: linesync pps aligned\n");
 		}
 	}
 
-	if(!level && (dd->linesync_count >= dd->linesync_frequency)) {
+	if((dd->linesync_count >= (dd->linesync_frequency * 2))) {
 		dd->linesync_count = 0;
 
 		/* Get monotonic timestamp for measuring linesync frequency */
