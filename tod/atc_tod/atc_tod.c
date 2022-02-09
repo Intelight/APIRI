@@ -63,6 +63,13 @@ MODULE_PARM_DESC(timesrc, "ATC Time Source Name");
 /* The tolerated rtc offset before the rtc is trimmed */
 #define RTC_TRIM_TOLERANCE_NS 1000000L
 
+enum atc_tod_rtc_read_state {
+	RTC_READ_INITIAL = 0,
+	RTC_READ_WORKER_READY,
+	RTC_READ_WORKER_PREPARE,
+	RTC_READ_DONE
+};
+
 struct atc_pps_data {
 	int irq;
 	int pin;
@@ -78,15 +85,14 @@ struct atc_tod_data {
 	bool linesync_frequency_locked;
 	bool rtc_initialized;
 	bool rtc_skipped_first_irq;
-	bool rtc_level;
 	int rtc_lockout_seconds;
 	bool rtc_write_request;
-	struct timespec rtc_initial_ts;
+	int rtc_read_state;
 	struct workqueue_struct *workqueue;
 	struct work_struct rtc_read_work;
 	struct delayed_work rtc_write_work;
-	struct completion rtc_sqwr_ready;
-	bool rtc_read_worker_ready;
+	struct completion rtc_half_second_ready;
+	struct completion rtc_full_second_ready;
 	struct miscdevice miscdev;
 	struct fasync_struct *tick_async_queue;
 	struct fasync_struct *onchange_async_queue;
@@ -287,50 +293,56 @@ static void atc_tod_rtc_read(struct work_struct *work)
 	struct atc_tod_data *dd = container_of(work, struct atc_tod_data, rtc_read_work);
 	struct rtc_device *rtc;
 	struct rtc_time tm;
+	struct timespec ts;
 	unsigned long flags;
 
-	spin_lock_irqsave(&dd->lock, flags);
 	rtc = rtc_class_open("rtc0");
 	if(!rtc) {
+		spin_lock_irqsave(&dd->lock, flags);
 		dd->rtc_initialized = true;
 		spin_unlock_irqrestore(&dd->lock, flags);
 		pr_err("atc-tod: failed to open rtc0\n");
 		return;
 	}
 
-	/* Let rtc IRQ know that the read worker is ready and then wait for
-	 * the next rtc interrupt
-	 */
-	dd->rtc_read_worker_ready = true;
+	// Let rtc IRQ know that the read worker is ready
+	spin_lock_irqsave(&dd->lock, flags);
+	dd->rtc_read_state = RTC_READ_WORKER_READY;
 	spin_unlock_irqrestore(&dd->lock, flags);
 
-	wait_for_completion(&dd->rtc_sqwr_ready);
+	// Wait for the RTC half second completion
+	wait_for_completion(&dd->rtc_half_second_ready);
 
+	// Read RTC time at the half second.  If the time is
+	// invalid set to a fixed date >2000 so that older
+	// GPS chips can synchronize
 	if(rtc_read_time(rtc, &tm) || rtc_valid_tm(&tm)) {
 		spin_lock_irqsave(&dd->lock, flags);
 		dd->rtc_initialized = true;
 		spin_unlock_irqrestore(&dd->lock, flags);
 		rtc_class_close(rtc);
-		pr_err("atc-tod: failed to read rtc time\n");
+		ts.tv_sec = 946684800; // Set time to 1-1-2000 
+		ts.tv_nsec = 0;
+		do_settimeofday(&ts);
+		pr_err("atc-tod: invalid rtc time\n");
 		return;
 	}
 	rtc_class_close(rtc);
 
-	// prepare rtc initial_ts to be set on the next rtc half-second interrupt
-	spin_lock_irqsave(&dd->lock, flags);
-	rtc_tm_to_time(&tm, &dd->rtc_initial_ts.tv_sec);
+	// Prepare the new time one second in the future.
+	rtc_tm_to_time(&tm, &ts.tv_sec);
+	ts.tv_sec++;
+	ts.tv_nsec = 0;
 
-	/* If the rtc square wave is high then this work was triggered on the
-	 * top of the second in which case the next IRQ will hit at the half
-	 * second.  If rtc_level is low the next IRQ will hit at the next full
-	 * second.
-	 */ 
-	//pr_info("atc-tod: rtc read sqwr: %d\n", dd->rtc_level);
-	if(dd->rtc_level) {
-		dd->rtc_initial_ts.tv_nsec = 500000000L;
-	} else {
-		dd->rtc_initial_ts.tv_sec++;
-	}
+	// Wait for the rtc full second completion
+	wait_for_completion(&dd->rtc_full_second_ready);
+
+	// Update the Linux system clock
+	do_settimeofday(&ts);
+	pr_info("atc-tod: rtc read settimeofday\n");
+
+	spin_lock_irqsave(&dd->lock, flags);
+	dd->rtc_initialized = true;
 	spin_unlock_irqrestore(&dd->lock, flags);
 }
 
@@ -422,44 +434,43 @@ static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
 	}
 
 	dd->linesync_count++;
+	if((dd->linesync_count >= (dd->linesync_frequency * 2))) {
+		dd->linesync_count = 0;
+	}
 
 	/* Realign linesync PPS if necessary */
 	if(dd->rtc_initialized && dd->linesync_frequency_locked && !dd->linesync_aligned) {
 		tolerance_ns = (500000000L / 2 / dd->linesync_frequency) + 500000L;
-
 		if((ts_real.tv_nsec < tolerance_ns) || (ts_real.tv_nsec > (1000000000L - tolerance_ns))) {
 			dd->linesync_aligned = true;
-			dd->linesync_count = dd->linesync_frequency * 2;
+			dd->linesync_count = 0;
 			pr_debug("atc-tod: linesync pps aligned\n");
 		}
 	}
 
-	if((dd->linesync_count >= (dd->linesync_frequency * 2))) {
-		dd->linesync_count = 0;
+	/* Send PPS assert event if aligned */
+	if(dd->linesync_count == 0 && dd->linesync_aligned) {
+		ts.ts_real = ts_real;
+		pps_event(dd->linesync.pps, &ts, PPS_CAPTUREASSERT, NULL);
+	}
 
-		/* Get monotonic timestamp for measuring linesync frequency */
+	/* Compare timestamps if we are measuring frequency
+	 * Wait a few ticks before measuring
+	 * Get monotonic timestamp for measuring linesync frequency
+	 */
+	if(!dd->linesync_frequency_locked && dd->linesync_count == 4) {
 		getrawmonotonic(&ts_raw);
-
-		/* Send PPS assert event if aligned */
-		if(dd->linesync_aligned) {
-			ts.ts_real = ts_real;
-			pps_event(dd->linesync.pps, &ts, PPS_CAPTUREASSERT, NULL);
-		}
-
-		/* Compare timestamps if we are measuring frequency */
-		if(dd->rtc_initialized && !dd->linesync_frequency_locked) {
-			if(dd->raw.tv_sec > 0) {
-				delta_ns = ktime_sub(timespec_to_ktime(ts_raw), timespec_to_ktime(dd->raw));
-				delta_ms = (int)ktime_to_ms(delta_ns);
-				if(delta_ms > 1150 && delta_ms < 1250) {
-					dd->linesync_frequency = 50;
-				}
-				dd->linesync_frequency_locked = true;
-				pr_info( "atc-tod: linesync frequency locked %dHz (%d)\n",
-					dd->linesync_frequency, delta_ms);
+		if(dd->raw.tv_sec > 0) {
+			delta_ns = ktime_sub(timespec_to_ktime(ts_raw), timespec_to_ktime(dd->raw));
+			delta_ms = (int)ktime_to_ms(delta_ns);
+			if(delta_ms > 1150 && delta_ms < 1250) {
+				dd->linesync_frequency = 50;
 			}
-			dd->raw = ts_raw;
+			dd->linesync_frequency_locked = true;
+			pr_info( "atc-tod: linesync frequency locked %dHz (%d)\n",
+				dd->linesync_frequency, delta_ms);
 		}
+		dd->raw = ts_raw;
 	}
 
 	spin_unlock_irqrestore(&dd->lock, flags);
@@ -471,7 +482,6 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 	struct atc_tod_data *dd = data;
 	struct pps_event_time ts;
 	struct timespec ts_real;
-	struct timespec rtc_ts;
 	unsigned long real_us;
 	unsigned long scheduled_us;
 	unsigned long delay_jiffies;
@@ -493,6 +503,12 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 		ts.ts_real = ts_real;
 		pps_event(dd->rtc.pps, &ts, PPS_CAPTUREASSERT, NULL);
 
+		/* mark rtc full second as completed */
+		if(dd->rtc_read_state == RTC_READ_WORKER_PREPARE) {
+			dd->rtc_read_state = RTC_READ_DONE;
+			complete(&dd->rtc_full_second_ready);
+		}
+
 		/* Ignore all clock steps during the first rtc lockout period */
 		if(dd->rtc_lockout_seconds < RTC_LOCKOUT_SEC) { 
 			dd->rtc_lockout_seconds++;
@@ -510,6 +526,12 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 			 dd->rtc_lockout_seconds == RTC_LOCKOUT_SEC &&
 			 (ts_real.tv_nsec > RTC_TRIM_TOLERANCE_NS) &&
 			 (ts_real.tv_nsec < (1000000000L - RTC_TRIM_TOLERANCE_NS)));
+	} else {
+		/* mark half second as completed */
+		if(dd->rtc_read_state == RTC_READ_WORKER_READY) {
+			dd->rtc_read_state = RTC_READ_WORKER_PREPARE;
+			complete(&dd->rtc_half_second_ready);
+		}
 	}
 
 	/* Automatically clear pwrdn active after a short timeout */
@@ -534,27 +556,6 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 			dd->rtc_lockout_seconds = 0;
 			dd->rtc_write_request = false;
 		}
-	}
-
-	/* Start iniitial rtc read request when worker is ready */
-	if(!dd->rtc_initialized && dd->rtc_read_worker_ready && dd->rtc_initial_ts.tv_sec == 0) {
-		dd->rtc_level = level;
-		spin_unlock_irqrestore(&dd->lock, flags);
-		complete(&dd->rtc_sqwr_ready);
-		return IRQ_HANDLED;
-	}
-
-	/* Run the rtc read work on the first second or half second rtc edge
-	 * The rtc read work item will look at the rtc_level and configure 
-	 * rtc_initial_ts to the appropriate value for the next half sec IRQ
-	 */
-	if(!dd->rtc_initialized && dd->rtc_initial_ts.tv_sec > 0) {
-		dd->rtc_initialized = true;
-		rtc_ts = dd->rtc_initial_ts;
-		spin_unlock_irqrestore(&dd->lock, flags);
-		do_settimeofday(&rtc_ts);
-		pr_info("atc-tod: rtc read settimeofday\n");
-		return IRQ_HANDLED;
 	}
 
 	spin_unlock_irqrestore(&dd->lock, flags);
@@ -646,7 +647,8 @@ static int atc_tod_probe(struct platform_device *pdev)
 	}
 
 	/* Setup rtc workqueue and start the rtc_read_work */
-	init_completion(&dd->rtc_sqwr_ready);
+	init_completion(&dd->rtc_half_second_ready);
+	init_completion(&dd->rtc_full_second_ready);
 	dd->workqueue = alloc_workqueue("atc-tod", WQ_HIGHPRI, 0);
 	INIT_WORK(&dd->rtc_read_work, atc_tod_rtc_read);
 	INIT_DELAYED_WORK(&dd->rtc_write_work, atc_tod_rtc_write);
