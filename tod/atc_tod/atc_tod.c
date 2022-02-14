@@ -57,6 +57,9 @@ MODULE_PARM_DESC(timesrc, "ATC Time Source Name");
 /* Time point when the rtc write function should be called */
 #define RTC_WRITE_POINT_US (RTC_PCF8564_RELEASE_POINT_US - RTC_PCF8564_I2C_DURATION_US)
 
+/* Time offset to schedule to rtc write work */
+#define RTC_WRITE_WINDOW_US 15000L
+
 /* Minimum time between rtc trim requests */
 #define RTC_LOCKOUT_SEC 16
 
@@ -90,7 +93,7 @@ struct atc_tod_data {
 	int rtc_read_state;
 	struct workqueue_struct *workqueue;
 	struct work_struct rtc_read_work;
-	struct delayed_work rtc_write_work;
+	struct work_struct rtc_write_work;
 	struct completion rtc_half_second_ready;
 	struct completion rtc_full_second_ready;
 	struct miscdevice miscdev;
@@ -346,16 +349,28 @@ static void atc_tod_rtc_read(struct work_struct *work)
 	spin_unlock_irqrestore(&dd->lock, flags);
 }
 
+static unsigned long atc_tod_rtc_write_offset_us(unsigned long real_ns)
+{
+	unsigned long real_us;
+
+	real_us = real_ns / 1000L;
+	if(real_us < RTC_WRITE_POINT_US) {
+		return RTC_WRITE_POINT_US - real_us;
+	} else {
+		return RTC_WRITE_POINT_US + (USEC_PER_SEC - real_us);
+	}
+}
+
 static void atc_tod_rtc_write(struct work_struct *work)
 {
-	struct delayed_work *dwork = to_delayed_work(work);
-	struct atc_tod_data *dd = container_of(dwork, struct atc_tod_data, rtc_write_work);
-	struct rtc_device *rtc;
+	struct atc_tod_data *dd = container_of(work, struct atc_tod_data, rtc_write_work);
 	struct timespec ts_real;
+	struct rtc_device *rtc;
+	unsigned long offset_us;
 	struct rtc_time tm = {0};
-	unsigned long real_us;
-	unsigned long delay_us;
 	unsigned int clock_step_seq;
+	unsigned int clock_step_seq_new;
+	int pwrdn_active_count;
 	unsigned long flags;
 
 	rtc = rtc_class_open("rtc0");
@@ -364,53 +379,55 @@ static void atc_tod_rtc_write(struct work_struct *work)
 		return;
 	}
 
-	getnstimeofday(&ts_real);
 	spin_lock_irqsave(&dd->lock, flags);
-
-	real_us = ts_real.tv_nsec/1000L;
-	if(real_us > (RTC_WRITE_POINT_US - 1)) {
-		dd->rtc_write_request = true;
-		spin_unlock_irqrestore(&dd->lock, flags);
-		rtc_class_close(rtc);
-		pr_err("atc-tod: rtc write missed window %lu\n", (real_us - RTC_WRITE_POINT_US));
-		return;
-	}
-	delay_us = RTC_WRITE_POINT_US - real_us;
 	clock_step_seq = dd->clock_step_seq;
 	spin_unlock_irqrestore(&dd->lock, flags);
 
-	usleep_range(delay_us - 1, delay_us + 1);
+	getnstimeofday(&ts_real);
+	offset_us = atc_tod_rtc_write_offset_us(ts_real.tv_nsec);
+	if(offset_us > RTC_WRITE_WINDOW_US) {
+		pr_err("atc-tod: overshoot rtc write window\n");
+		rtc_class_close(rtc);
+		return;
+	}
+
+	usleep_range(offset_us, offset_us + 1);
 
 	spin_lock_irqsave(&dd->lock, flags);
-	if(clock_step_seq != dd->clock_step_seq) {
+	clock_step_seq_new = dd->clock_step_seq;
+	pwrdn_active_count = dd->pwrdn_active_count;
+	spin_unlock_irqrestore(&dd->lock, flags);
+
+	if(pwrdn_active_count > 0) {
+		pr_err("atc-tod: pwrdn active during rtc write\n");
+		rtc_class_close(rtc);
+		spin_lock_irqsave(&dd->lock, flags);
 		dd->rtc_write_request = true;
 		spin_unlock_irqrestore(&dd->lock, flags);
-		rtc_class_close(rtc);
-		pr_err("atc-tod: clock step during rtc write\n");
 		return;
 	}
 
-	if(dd->pwrdn_active_count) {
+	if(clock_step_seq != clock_step_seq_new) {
+		pr_err("atc-tod: clock step during rtc write\n");
+		rtc_class_close(rtc);
+		spin_lock_irqsave(&dd->lock, flags);
 		dd->rtc_write_request = true;
 		spin_unlock_irqrestore(&dd->lock, flags);
-		rtc_class_close(rtc);
-		pr_err("atc-tod: pwrdn active during rtc write\n");
 		return;
 	}
-	spin_unlock_irqrestore(&dd->lock, flags);
 
 	rtc_time_to_tm(ts_real.tv_sec, &tm);
 	if (rtc_set_time(rtc, &tm) != 0) {
-		rtc_class_close(rtc);
 		pr_err("atc-tod: rtc_set_time error\n");
+		rtc_class_close(rtc);
 		return;
 	}
-
 	rtc_class_close(rtc);
+
 	pr_debug("atc-tod: setting rtc clock to "
-		"%d-%02d-%02d %02d:%02d:%02d UTC %lu\n",
+		"%d-%02d-%02d %02d:%02d:%02d UTC\n",
 		tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-		tm.tm_hour, tm.tm_min, tm.tm_sec, delay_us);
+		tm.tm_hour, tm.tm_min, tm.tm_sec);
 }
 
 static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
@@ -422,6 +439,7 @@ static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
 	ktime_t delta_ns;
 	long tolerance_ns;
 	int delta_ms;
+	unsigned long offset_us;
 	unsigned long flags;
 
 	/* Get the real timestamp */
@@ -454,11 +472,17 @@ static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
 		pps_event(dd->linesync.pps, &ts, PPS_CAPTUREASSERT, NULL);
 	}
 
-	/* Compare timestamps if we are measuring frequency
-	 * Wait a few ticks before measuring
-	 * Get monotonic timestamp for measuring linesync frequency
-	 */
-	if(!dd->linesync_frequency_locked && dd->linesync_count == 4) {
+	/* Queue rtc write work if within the rtc write window */
+	offset_us = atc_tod_rtc_write_offset_us(ts_real.tv_nsec);
+	if(dd->rtc_write_request && (offset_us < RTC_WRITE_WINDOW_US)) {
+		if(queue_work(dd->workqueue, &dd->rtc_write_work)) {
+			dd->rtc_lockout_seconds = 0;
+			dd->rtc_write_request = false;
+		}
+	}
+
+	/* Compare timestamps if we are measuring frequency */
+	if(dd->rtc_initialized && !dd->linesync_frequency_locked && dd->linesync_count == 0) {
 		getrawmonotonic(&ts_raw);
 		if(dd->raw.tv_sec > 0) {
 			delta_ns = ktime_sub(timespec_to_ktime(ts_raw), timespec_to_ktime(dd->raw));
@@ -482,9 +506,6 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 	struct atc_tod_data *dd = data;
 	struct pps_event_time ts;
 	struct timespec ts_real;
-	unsigned long real_us;
-	unsigned long scheduled_us;
-	unsigned long delay_jiffies;
 	bool level;
 	unsigned long flags;
 
@@ -515,17 +536,6 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 		} else {
 			dd->detect_clock_step = true;
 		}
-
-		/* set the rtc only on clock step or when the square wave is
-		 * one tick out of alignment.  When using the rtc square wave
-		 * as a pps source this technique is important to minimize the
-		 * number of times we stop/start/change the rtc.
-		 */
-		dd->rtc_write_request = dd->rtc_write_request ||
-			(dd->rtc_initialized &&
-			 dd->rtc_lockout_seconds == RTC_LOCKOUT_SEC &&
-			 (ts_real.tv_nsec > RTC_TRIM_TOLERANCE_NS) &&
-			 (ts_real.tv_nsec < (1000000000L - RTC_TRIM_TOLERANCE_NS)));
 	} else {
 		/* mark half second as completed */
 		if(dd->rtc_read_state == RTC_READ_WORKER_READY) {
@@ -539,23 +549,16 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 		dd->pwrdn_active_count--;
 	}
 
-	/* Schedule a new rtc write request just before the desired
-	 * point where we need to set the RTC.  Schedule the delayed
-	 * work 1 jiffy before the required schedule point.
-	 * queue_delayed_work() returns false if work is already queued.
+	/* set the rtc only on clock step or when the square wave is
+	 * one tick out of alignment.  When using the rtc square wave
+	 * as a pps source this technique is important to minimize the
+	 * number of times we stop/start/change the rtc.
 	 */
-	if(dd->rtc_write_request) {
-		real_us = ts_real.tv_nsec / 1000L;
-		scheduled_us = RTC_WRITE_POINT_US - (USEC_PER_SEC / HZ);  
-		if(real_us < scheduled_us) {
-			delay_jiffies = ((scheduled_us - real_us) * HZ) / USEC_PER_SEC;
-		} else {
-			delay_jiffies = HZ - (((real_us - scheduled_us) * HZ) / USEC_PER_SEC);
-		}
-		if(queue_delayed_work(dd->workqueue, &dd->rtc_write_work, delay_jiffies)) {
-			dd->rtc_lockout_seconds = 0;
-			dd->rtc_write_request = false;
-		}
+	if(dd->rtc_initialized &&
+	  dd->rtc_lockout_seconds == RTC_LOCKOUT_SEC &&
+	  (ts_real.tv_nsec > RTC_TRIM_TOLERANCE_NS) &&
+	  (ts_real.tv_nsec < (NSEC_PER_SEC - RTC_TRIM_TOLERANCE_NS))) {
+		dd->rtc_write_request = true;
 	}
 
 	spin_unlock_irqrestore(&dd->lock, flags);
@@ -651,7 +654,7 @@ static int atc_tod_probe(struct platform_device *pdev)
 	init_completion(&dd->rtc_full_second_ready);
 	dd->workqueue = alloc_workqueue("atc-tod", WQ_HIGHPRI, 0);
 	INIT_WORK(&dd->rtc_read_work, atc_tod_rtc_read);
-	INIT_DELAYED_WORK(&dd->rtc_write_work, atc_tod_rtc_write);
+	INIT_WORK(&dd->rtc_write_work, atc_tod_rtc_write);
 	queue_work(dd->workqueue, &dd->rtc_read_work);
 
 	/* Setup ioctl handling */
