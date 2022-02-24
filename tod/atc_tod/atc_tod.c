@@ -58,13 +58,20 @@ MODULE_PARM_DESC(timesrc, "ATC Time Source Name");
 #define RTC_WRITE_POINT_US (RTC_PCF8564_RELEASE_POINT_US - RTC_PCF8564_I2C_DURATION_US)
 
 /* Time offset to schedule to rtc write work */
-#define RTC_WRITE_WINDOW_US 15000L
+#define RTC_WRITE_WINDOW_MAX_US 20000L
+#define RTC_WRITE_WINDOW_MIN_US 5000L
 
 /* Minimum time between rtc trim requests */
 #define RTC_LOCKOUT_SEC 16
 
+/* Delay in seconds before using linesync pps */
+#define LINESYNC_SETUP_DELAY_SEC 10
+
 /* The tolerated rtc offset before the rtc is trimmed */
 #define RTC_TRIM_TOLERANCE_NS 1000000L
+
+/* Amount of ticks after clock step until time has stabilized */
+#define CLOCK_STEP_STABILIZE_TICKS 10
 
 enum atc_tod_rtc_read_state {
 	RTC_READ_INITIAL = 0,
@@ -82,14 +89,17 @@ struct atc_pps_data {
 struct atc_tod_data {
 	struct atc_pps_data linesync;
 	struct atc_pps_data rtc;
-	int linesync_count;
-	int linesync_aligned;
-	int linesync_frequency;
+	int linesync_tick;
+	int linesync_pps_tick;
+	int linesync_realign_tick;
+	int linesync_ticks_per_sec;
 	bool linesync_frequency_locked;
+	int linesync_setup_delay_sec;
 	bool rtc_initialized;
 	bool rtc_skipped_first_irq;
 	int rtc_lockout_seconds;
 	bool rtc_write_request;
+	bool rtc_write_request_allowed;
 	int rtc_read_state;
 	struct workqueue_struct *workqueue;
 	struct work_struct rtc_read_work;
@@ -104,7 +114,6 @@ struct atc_tod_data {
 	struct timespec raw;
 	int timesrc;
 	unsigned int clock_step_seq;
-	bool detect_clock_step;
 	int pwrdn_active_count;
 	struct notifier_block clock_step_notifier;
 	struct notifier_block atc_pwrdn_notifier;
@@ -171,7 +180,7 @@ static long atc_tod_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 	case ATC_TOD_GET_INPUT_FREQ:
 		if ((dd->timesrc == ATC_TIMESRC_LINESYNC)
 				|| (dd->timesrc == ATC_TIMESRC_RTCSQWR))
-			ret = dd->linesync_frequency;
+			ret = dd->linesync_ticks_per_sec / 2;
 		else if (dd->timesrc == ATC_TIMESRC_CRYSTAL)
 			ret = HZ;
 		else
@@ -255,11 +264,14 @@ static int atc_tod_clock_step(struct notifier_block *self, unsigned long action,
 	/* action is true if the clock was stepped. */
 	/* This may be called in an unknown context so, just set variables */
 	spin_lock_irqsave(&dd->lock, flags);
-	if(action && dd->detect_clock_step) {
+	if(action) {
 		dd->clock_step_seq++;
-		dd->linesync_aligned = false;
-		dd->rtc_write_request = true;
+		dd->linesync_realign_tick = dd->linesync_tick + CLOCK_STEP_STABILIZE_TICKS;
+		dd->linesync_realign_tick %= dd->linesync_ticks_per_sec;
 		dd->rtc_lockout_seconds = 0;
+		if(dd->rtc_write_request_allowed) {
+			dd->rtc_write_request = true;
+		}
 		pr_debug("atc-tod: clock step\n");
 		if (dd->onchange_async_queue != NULL) {
 			kill_fasync(&dd->onchange_async_queue, SIGIO, POLL_IN);
@@ -385,7 +397,7 @@ static void atc_tod_rtc_write(struct work_struct *work)
 
 	getnstimeofday(&ts_real);
 	offset_us = atc_tod_rtc_write_offset_us(ts_real.tv_nsec);
-	if(offset_us > RTC_WRITE_WINDOW_US) {
+	if(offset_us > RTC_WRITE_WINDOW_MAX_US) {
 		pr_err("atc-tod: overshoot rtc write window\n");
 		rtc_class_close(rtc);
 		return;
@@ -437,65 +449,80 @@ static irqreturn_t atc_tod_linesync_irq_handler(int irq, void *data)
 	struct timespec ts_real;
 	struct timespec ts_raw;
 	ktime_t delta_ns;
-	long tolerance_ns;
 	int delta_ms;
+	int pps_tick_delta;
+	unsigned long tick_us;
 	unsigned long offset_us;
 	unsigned long flags;
 
-	/* Get the real timestamp */
-	getnstimeofday(&ts_real);
 	spin_lock_irqsave(&dd->lock, flags);
+
+	/* Send PPS assert event */
+	if(dd->linesync_frequency_locked && (dd->linesync_tick == dd->linesync_pps_tick)) {
+		getnstimeofday(&ts_real);
+		ts.ts_real = ts_real;
+		pps_event(dd->linesync.pps, &ts, PPS_CAPTUREASSERT, NULL);
+		//pr_info("atc-tod: linesync pps %d %d %ld\n", dd->linesync_tick, dd->linesync_pps_tick, ts_real.tv_nsec);
+	}
 
 	/* send user space linesync tick signal */
 	if (dd->tick_async_queue != NULL) {
 		kill_fasync(&dd->tick_async_queue, SIGIO, POLL_IN);
 	}
 
-	dd->linesync_count++;
-	if((dd->linesync_count >= (dd->linesync_frequency * 2))) {
-		dd->linesync_count = 0;
-	}
-
-	/* Realign linesync PPS if necessary */
-	if(dd->rtc_initialized && dd->linesync_frequency_locked && !dd->linesync_aligned) {
-		tolerance_ns = (500000000L / 2 / dd->linesync_frequency) + 500000L;
-		if((ts_real.tv_nsec < tolerance_ns) || (ts_real.tv_nsec > (1000000000L - tolerance_ns))) {
-			dd->linesync_aligned = true;
-			dd->linesync_count = 0;
-			pr_debug("atc-tod: linesync pps aligned\n");
+	/* Realign linesync PPS rounded to the nearest tick */
+	if(dd->linesync_frequency_locked && (dd->linesync_tick == dd->linesync_realign_tick)) {
+		getnstimeofday(&ts_real);
+		dd->linesync_realign_tick = -1;
+		offset_us = (NSEC_PER_SEC - ts_real.tv_nsec) / 1000L;
+		tick_us = USEC_PER_SEC / dd->linesync_ticks_per_sec;
+		pps_tick_delta = offset_us / tick_us;
+		if((offset_us % tick_us) > (tick_us / 2)) {
+			pps_tick_delta++;
 		}
+		dd->linesync_pps_tick = dd->linesync_tick + pps_tick_delta;
+		dd->linesync_pps_tick %= dd->linesync_ticks_per_sec;
+		//pr_info("atc-tod: realign linesync pps %d %d %ld\n", dd->linesync_tick, dd->linesync_pps_tick, ts_real.tv_nsec);
 	}
 
-	/* Send PPS assert event if aligned */
-	if(dd->linesync_count == 0 && dd->linesync_aligned) {
-		ts.ts_real = ts_real;
-		pps_event(dd->linesync.pps, &ts, PPS_CAPTUREASSERT, NULL);
-	}
 
 	/* Queue rtc write work if within the rtc write window */
-	offset_us = atc_tod_rtc_write_offset_us(ts_real.tv_nsec);
-	if(dd->rtc_write_request && (offset_us < RTC_WRITE_WINDOW_US)) {
-		if(queue_work(dd->workqueue, &dd->rtc_write_work)) {
-			dd->rtc_lockout_seconds = 0;
-			dd->rtc_write_request = false;
+	if(dd->rtc_write_request) {
+		getnstimeofday(&ts_real);
+		offset_us = atc_tod_rtc_write_offset_us(ts_real.tv_nsec);
+		if((offset_us < RTC_WRITE_WINDOW_MAX_US) && (offset_us > RTC_WRITE_WINDOW_MIN_US)) {
+			if(queue_work(dd->workqueue, &dd->rtc_write_work)) {
+				dd->rtc_lockout_seconds = 0;
+				dd->rtc_write_request = false;
+			}
 		}
 	}
 
 	/* Compare timestamps if we are measuring frequency */
-	if(dd->rtc_initialized && !dd->linesync_frequency_locked && dd->linesync_count == 0) {
+	if(dd->rtc_initialized && 
+	!dd->linesync_frequency_locked && 
+	dd->linesync_tick == 0 &&
+	(dd->linesync_setup_delay_sec == LINESYNC_SETUP_DELAY_SEC)) {
 		getrawmonotonic(&ts_raw);
 		if(dd->raw.tv_sec > 0) {
 			delta_ns = ktime_sub(timespec_to_ktime(ts_raw), timespec_to_ktime(dd->raw));
 			delta_ms = (int)ktime_to_ms(delta_ns);
 			if(delta_ms > 1150 && delta_ms < 1250) {
-				dd->linesync_frequency = 50;
+				dd->linesync_ticks_per_sec = 100;
+				dd->linesync_tick = 0;
+				dd->linesync_pps_tick = 0;
+				dd->linesync_realign_tick = 0;
 			}
 			dd->linesync_frequency_locked = true;
 			pr_info( "atc-tod: linesync frequency locked %dHz (%d)\n",
-				dd->linesync_frequency, delta_ms);
+				dd->linesync_ticks_per_sec/2, delta_ms);
 		}
 		dd->raw = ts_raw;
 	}
+
+	/* Increment free running linesync tick */
+	dd->linesync_tick++;
+	dd->linesync_tick %= dd->linesync_ticks_per_sec;
 
 	spin_unlock_irqrestore(&dd->lock, flags);
 	return IRQ_HANDLED;
@@ -534,9 +561,14 @@ static irqreturn_t atc_tod_rtc_irq_handler(int irq, void *data)
 		if(dd->rtc_lockout_seconds < RTC_LOCKOUT_SEC) { 
 			dd->rtc_lockout_seconds++;
 		} else {
-			dd->detect_clock_step = true;
+			dd->rtc_write_request_allowed = true;
 		}
-	} else {
+
+		/* Wait delay before using linesync pps */
+		if(dd->linesync_setup_delay_sec < LINESYNC_SETUP_DELAY_SEC) { 
+			dd->linesync_setup_delay_sec++;
+		}
+	} else { 
 		/* mark half second as completed */
 		if(dd->rtc_read_state == RTC_READ_WORKER_READY) {
 			dd->rtc_read_state = RTC_READ_WORKER_PREPARE;
@@ -635,7 +667,7 @@ static int atc_tod_probe(struct platform_device *pdev)
 	spin_lock_init(&dd->lock);
 
 	/* Initialize non-zero parameters */
-	dd->linesync_frequency = 60;
+	dd->linesync_ticks_per_sec = 120;
 
 	/* Setup linesync irq and pps */
 	ret = atc_tod_setup_pps(pdev, 0, &dd->linesync, "atc-linesync");
@@ -663,7 +695,7 @@ static int atc_tod_probe(struct platform_device *pdev)
 	dd->miscdev.name = kstrdup(np->name, GFP_KERNEL);
 	misc_register(&dd->miscdev);
 
-	/* Enable linesync interrupt handler on falling edge only */
+	/* Enable linesync interrupt handler on both edges */
 	ret = request_irq(dd->linesync.irq, atc_tod_linesync_irq_handler, 0, "atc-linesync", dd);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to acquire IRQ %d\n", dd->linesync.irq);
