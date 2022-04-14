@@ -256,6 +256,18 @@ u8 device_to_addr( FIO_DEVICE_TYPE device_type )
 	else if ( device_type == FIOOUT14SIU2 )
 		/* 14 Pack Output SIU2 */
 		frame_addr = 3;
+	else if ( device_type == FIOCMU )
+		/* ITS CMU */
+		frame_addr = 15;
+	else if ( (device_type >= FIODR1) && (device_type <= FIODR8) )
+		/* TS2 Detector BIU */
+		frame_addr = (device_type - FIODR1) + 8;
+	else if ( (device_type >= FIOTF1) && (device_type <= FIOTF8) )
+		/* TS2 TF BIU */
+		frame_addr = (device_type - FIOTF1);
+	else if ( device_type == FIOMMU )
+		/* TS2 MMU */
+		frame_addr = 16;
 
 	return frame_addr;
 }
