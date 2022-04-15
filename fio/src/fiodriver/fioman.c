@@ -726,13 +726,9 @@ fioman_add_def_fiod_frames
 			if (rx_frame)
 				list_add_tail( &((FIOMSG_RX_FRAME *)(rx_frame))->elem, rx_frames );
 
-#if 0
-			/* Indicate other valid frames not sent by default (FIO332,FIOTS1,FIOINSIU,FIOOUTSIU) */
-			p_fiod->frame_frequency_table[60] = FIO_HZ_0;
-			p_fiod->frame_frequency_table[61] = FIO_HZ_0;
+			/* Indicate other valid frames not sent by default (FIOCMU) */
 			p_fiod->frame_frequency_table[62] = FIO_HZ_0;
-			p_fiod->frame_frequency_table[65] = FIO_HZ_0;
-#endif
+
 			break;
 		}
 
