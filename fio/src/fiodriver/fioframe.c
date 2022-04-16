@@ -306,7 +306,7 @@ fioman_ready_generic_tx_frame
 		p_tx->when = FIOMSG_CURRENT_TIME;		/* Set when to send frame */
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
-		copy_from_user(FIOMSG_PAYLOAD(p_tx), payload, count);
+		copy_from_user(FIOMSG_PAYLOAD(p_tx)->frame_info, payload, count);
 	}
 	else
 	{
