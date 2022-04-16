@@ -306,7 +306,7 @@ fioman_ready_generic_tx_frame
 		p_tx->when = FIOMSG_CURRENT_TIME;		/* Set when to send frame */
 		p_tx->fioman_context = (void *)p_sys_fiod;
 		p_tx->fiod = p_sys_fiod->fiod;
-		copy_from_user(FIOMSG_PAYLOAD(p_tx), payload, count);
+		copy_from_user(FIOMSG_PAYLOAD(p_tx)->frame_info, payload, count);
 	}
 	else
 	{
@@ -881,13 +881,19 @@ fioman_tx_frame_62
 {
 	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* For access to System info */
 	unsigned long	flags;
+  unsigned char action = 0;
 
 	/* Get access to system info */
 	p_sys_fiod = (FIOMAN_SYS_FIOD *)p_tx_frame->fioman_context;
 
 	spin_lock_irqsave(&p_sys_fiod->lock, flags);
 	/* Copy data from FIOD System setting */
-	FIOMSG_PAYLOAD(p_tx_frame)->frame_info[0] = p_sys_fiod->cmu_fsa;
+  if (p_sys_fiod->cmu_fsa == FIO_CMU_FSA_LATCHING) {
+    action = 1;
+  } else if (p_sys_fiod->cmu_fsa == FIO_CMU_FSA_NON_LATCHING) {
+    action = 2;
+  }
+	FIOMSG_PAYLOAD(p_tx_frame)->frame_info[0] = action;
 	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
 }
 
