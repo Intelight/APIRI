@@ -557,6 +557,10 @@ void viewport_listener( char *filepath )
 								break;
 							case PWR_UP:	// The UI powered up or reset
 								DBG( "%s: POWER UP sequence\n", __func__ );
+                display_present = true;
+                check_screen_size( fd );
+                set_focus(has_focus);
+                ping = false;
 								virtual_terminal_return( has_focus, buf );
 								break;
 							case STATUS: //Status at cursor position
