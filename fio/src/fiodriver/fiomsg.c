@@ -669,8 +669,7 @@ fiomsg_rx_add_frame
 			if ( FIOMSG_PAYLOAD( p_rx_elem )->frame_no ==
 				 FIOMSG_PAYLOAD( p_frame )->frame_no )
 			{
-				printk( KERN_ALERT
-						"Trying to add existing RX frame(%d), killing!\n",
+				pr_debug("Trying to add existing RX frame(%d), killing!\n",
 						FIOMSG_PAYLOAD( p_frame )->frame_no );
 				kfree( p_frame );
 				return;
