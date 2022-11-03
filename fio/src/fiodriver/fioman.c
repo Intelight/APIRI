@@ -572,6 +572,43 @@ fioman_add_frame
 
 /*****************************************************************************/
 /*
+This function is used to remove a specific request frame and response, if any
+*/
+/*****************************************************************************/
+int
+fioman_remove_frame
+(
+	FIOMAN_SYS_FIOD	*p_sys_fiod,		/* FIOD of destined frame */
+	int frame_no
+)
+{
+  struct list_head	*p_elem;	/* Ptr to queue element being examined */
+	struct list_head	*p_next;	/* Temp Ptr to next for loop */
+	FIOMSG_TX_FRAME		*p_tx_elem;	/* Ptr to tx frame being examined */
+	FIOMSG_PORT		*p_port;	/* Port of Request Queue */
+
+  /* Search for frame in tx queue */
+  /* Get port to work on */
+  p_port = FIOMSG_P_PORT(p_sys_fiod->fiod.port);
+  /* For each element in the queue */
+  list_for_each_safe(p_elem, p_next, &p_port->tx_queue) {
+    /* Get the request frame for this queue element */
+    p_tx_elem = list_entry(p_elem, FIOMSG_TX_FRAME, elem);
+    /* See if current element matches fiod */
+    if (p_tx_elem->fiod.fiod == p_sys_fiod->fiod.fiod) {
+      /* Does the frame number match one requested? */
+      if (FIOMSG_PAYLOAD(p_tx_elem)->frame_no == frame_no) {
+        list_del_init(p_elem);
+        kfree(p_tx_elem);
+      }
+    }
+  }
+  return(-EINVAL);
+
+}
+
+/*****************************************************************************/
+/*
 This function adds the default frames for a port (given the indicated FIOD)
 to the request frame list for this port, for the first time the port is
 accessed.
@@ -1814,15 +1851,9 @@ fioman_outputs_set
 		p_sys_fiod->outputs_minus[ ii ] |= minus[ ii ];
 	}
 	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
-pr_debug("fioman_outputs_set: %x %x %x %x %x %x %x %x\n",
-	plus[0]|minus[0],
-	plus[1]|minus[1],
-	plus[2]|minus[2],
-	plus[3]|minus[3],
-	plus[4]|minus[4],
-	plus[5]|minus[5],
-	plus[6]|minus[6],
-	plus[7]|minus[7]);
+/*pr_debug("fioman_outputs_set:+%x %x %x %x %x %x %x %x -%x %x %x %x %x %x %x %x\n",
+	plus[0], plus[1], plus[2], plus[3], plus[4], plus[5], plus[6], plus[7],
+  minus[0], minus[1], minus[2], minus[3], minus[4], minus[5], minus[6], minus[7]);*/
 	/* return success */
 	return ( 0 );
 }
@@ -2794,8 +2825,8 @@ fioman_inputs_get
 	}
 	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
 
-        /*pr_debug( KERN_ALERT "fiod_inputs_get: fiod(%d), %x %x %x %x %x %x %x %x\n",
-                p_sys_fiod->fiod.fiod,
+  /*pr_debug( KERN_ALERT "fiod_inputs_get: fiod(%d), %x %x %x %x %x %x %x %x\n",
+    p_sys_fiod->fiod.fiod,
 		inputs[0], inputs[1], inputs[2], inputs[3],
 		inputs[4], inputs[5], inputs[6], inputs[7]);*/
 
