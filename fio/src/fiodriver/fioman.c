@@ -600,6 +600,7 @@ fioman_remove_frame
       if (FIOMSG_PAYLOAD(p_tx_elem)->frame_no == frame_no) {
         list_del_init(p_elem);
         kfree(p_tx_elem);
+        return 0;
       }
     }
   }
