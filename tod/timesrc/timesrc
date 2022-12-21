@@ -24,7 +24,7 @@ currentSource() {
 setSource() {
 	currentSource
 
-	sed -i '/LSYN/d;/GPS/d;/server/d' /etc/chrony.conf
+	sed -i '/LSYN/d;/GPS/d;/server/d;/maxdistance/d' /etc/chrony.conf
 	sed -i '/export DEVICES=/c\export DEVICES=""' /etc/gpsd.conf	
 
 	case "$1" in
@@ -43,6 +43,7 @@ setSource() {
 			;;
 		EXTERNAL2)
 			echo "setting timesrc to EXTERNAL2(4)"
+			sed -i "1s|^|maxdistance 16.0\n|" /etc/chrony.conf
 			sed -i "1s|^|server $2 iburst\n|" /etc/chrony.conf
 			;;
 	esac
