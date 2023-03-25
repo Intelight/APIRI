@@ -81,6 +81,7 @@ fio_register
 (
 )
 {
+	system("/sbin/modprobe fiodriver");
 	return ( ( FIO_APP_HANDLE )open( FIO_DEV, O_RDWR ) );
 }
 
