@@ -1235,19 +1235,9 @@ fioman_add_def_fiod_frames
 
 /*****************************************************************************/
 
-bool fiod_conflict_check( FIO_DEVICE_TYPE a, FIO_DEVICE_TYPE b)
+bool fiod_conflict_check(FIO_DEVICE_TYPE a, FIO_DEVICE_TYPE b)
 {
-	if ((a > FIO332) && (a < FIOCMU)) {
-		if ((b < FIOTS1) || (b > FIOTF8))
-			return true;
-	} else if (a > FIOTF8) {
-		if (b < FIOCMU)
-			return true;
-	} else if (b != FIO332) {
-		return true;
-	}
-	
-	return false;
+  return (IS_NEMA(a) != IS_NEMA(b));
 }
 
 /*****************************************************************************/
