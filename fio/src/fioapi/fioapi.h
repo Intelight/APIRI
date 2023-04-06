@@ -130,7 +130,16 @@ enum fio_device_type
 typedef	enum fio_device_type	FIO_DEVICE_TYPE;
 
 #define IS_TFBIU(x)		((x>=FIOTF1)&&(x<=FIOTF8))
+#define IS_DRBIU(x)   ((x>=FIODR1)&&(x<=FIODR8))
+#define IS_MMU(x)     (x==FIOMMU)
+#define IS_NEMA(x)    ((x>=FIOMMU)&&(x<=FIOTF8))
 #define IS_OUTSIU(x)	((x>=FIOOUT6SIU1)&&(x<=FIOOUT14SIU2))
+#define IS_INSIU(x)   ((x>=FIOINSIU1)&&(x<=FIOINSIU5))
+#define IS_CMU(x)     (x==FIOCMU)
+#define IS_ITS(x)     ((x>=FIO_CMU)&&(x<=FIOOUT14SIU2))
+#define IS_FIO332(x)  (x==FIO332)
+#define IS_FIOTS1(x)  (x==FIOTS1)
+#define IS_FIOTS2(x)  (x==FIOTS2)
 
 /* HZ Definitions for Apps */
 enum fio_hz
