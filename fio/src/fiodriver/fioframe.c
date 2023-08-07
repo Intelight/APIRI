@@ -50,7 +50,6 @@ extern FIOMSG_TIME fiomsg_tx_frame_when(FIO_HZ freq);
 extern int local_time_offset;
 extern FIOMSG_PORT	fio_port_table[ FIO_PORTS_MAX ];
 extern FIOMSG_TX_FRAME *fioman_get_tx_frame(FIOMAN_SYS_FIOD *, int);
-extern FIOMSG_TX_FRAME *fioman_remove_frame(FIOMAN_SYS_FIOD *, int);
 
 /*  Global section.
 -----------------------------------------------------------------------------*/
@@ -2571,7 +2570,9 @@ fioman_rx_frame_179
     spin_lock_irqsave(&p_sys_fiod->lock, flags);
     p_sys_fiod->inputs_configured = true;
     /* Remove frame 51 from schedule */
-    fioman_remove_frame(p_sys_fiod, FIOMAN_FRAME_NO_51);
+    if ((p_tx_frame = fioman_get_tx_frame(p_sys_fiod, FIOMAN_FRAME_NO_51)) != NULL) {
+      p_tx_frame->cur_freq = FIO_HZ_0;
+    }
     spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
   }
     
