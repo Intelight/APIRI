@@ -731,6 +731,7 @@ fiomsg_rx_update_frame
 {
 	struct list_head	*p_elem;		/* Ptr to list element being examined */
 	FIOMSG_RX_FRAME		*p_rx_elem;		/* Ptr to rx frame being examined */
+	FIOMSG_TX_FRAME		*p_tx_frame;	/* Next request frame in queue */
         FIO_NOTIFY_INFO         notify_info;
 
 	/* For each element in the list */
@@ -765,8 +766,13 @@ fiomsg_rx_update_frame
                                 p_rx_elem->info.last_seq++;
                                 if (p_rx_elem->info.success_rx < 4294967295L)
 					p_rx_elem->info.success_rx++;
-                                if (p_rx_elem->info.error_last_10)
+                                if (p_rx_elem->info.error_last_10) {
+									p_tx_frame = list_entry( p_port->tx_queue.next, FIOMSG_TX_FRAME, elem );
+									if (p_tx_frame->def_freq == FIO_HZ_ONCE)
+										p_rx_elem->info.error_last_10 = 0;
+									else
                                         p_rx_elem->info.error_last_10--;
+								}
                                 notify_info.status = FIO_FRAME_RECEIVED;
                                 notify_info.seq_number = p_rx_elem->info.last_seq;
                                 notify_info.count = (p_rx_elem->len - 2);
