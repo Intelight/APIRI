@@ -39,8 +39,6 @@ TEG - NO LOCKING IS IN PLACE.  THIS IS NOT AN ISSUE FOR INITIAL DEVELOPMENT
 /* System includes. */
 #include	<linux/fs.h>		/* File System Definitions */
 #include	<linux/poll.h>
-#include	<linux/signal.h>
-#include	<linux/sched.h>
 #include	"atc_spxs.h"
 
 /* Local includes. */
@@ -235,10 +233,10 @@ static	FIOMSG_TX_DEAD_TIME_CALC	dead_time[] =
 	{  2000/*was 500*/, 2715,  360 },	/*  21 - NEMA-TS2 */
 	{  2000/*was 500*/, 2715,  360 },	/*  22 - NEMA-TS2 */
 	{  2000/*was 500*/, 2715,  360 },	/*  23 - NEMA-TS2 */
-	{  2000/*was 500*/, 1453,  412 },	/*  24 - NEMA-TS2 */
-	{  2000/*was 500*/, 1453,  412 },	/*  25 - NEMA-TS2 */
-	{  2000/*was 500*/, 1453,  412 },	/*  26 - NEMA-TS2 */
-	{  2000/*was 500*/, 1453,  412 },	/*  27 - NEMA-TS2 */
+	{  500/*was 500*/, 1453,  412 },	/*  24 - NEMA-TS2 */
+	{  500/*was 500*/, 1453,  412 },	/*  25 - NEMA-TS2 */
+	{  500/*was 500*/, 1453,  412 },	/*  26 - NEMA-TS2 */
+	{  500/*was 500*/, 1453,  412 },	/*  27 - NEMA-TS2 */
 	{  500/*was 500*/, 1000,  500 },	/*  28 */
 	{  500/*was 500*/, 1000,  500 },	/*  29 */
 	{  500/*was 500*/, 1957,  360 },	/*  30 - NEMA-TS2 */
@@ -260,22 +258,22 @@ static	FIOMSG_TX_DEAD_TIME_CALC	dead_time[] =
 	{  500/*was 500*/, 1000,  500 },	/*  46 */
 	{  500/*was 500*/, 1000,  500 },	/*  47 */
 	{  500/*was 500*/, 1000,  500 },	/*  48 */
-	{  4000/*was 500*/, 183,  105 },	/*  49 - ATC */
-	{  4000/*was 500*/, 105,  144 },	/*  50 - ATC */
-	{  5000/*was 500*/, 105,  4753 },	/*  51 - ATC */
-	{  4000/*was 500*/, 339,  92 },	/*  52 - ATC */
-	{  4000/*was 500*/, 339,  92 },	/*  53 - ATC */
-	{  4000/*was 500*/, 10143, 105 },	/*  54 - ATC */
-	{  4000/*was 500*/, 105,  430 },	/*  55 - ATC */
-	{  4000/*was 500*/, 10143, 105 },	/*  56 - ATC */
-	{  4000/*was 500*/, 105,  4753 },	/*  57 - ATC */
+	{  4000/*was 500*/, 1000,  275 },	/*  49 - ATC */
+	{  4000/*was 500*/, 1000,  238 },	/*  50 - ATC */
+	{  4000/*was 500*/, 1000,  6875 },	/*  51 - ATC */
+	{  4000/*was 500*/, 1000,  320 },	/*  52 - ATC */
+	{  4000/*was 500*/, 1000,  320 },	/*  53 - ATC */
+	{  4000/*was 500*/, 1000,  10250 },	/*  54 - ATC */
+	{  5000/*was 500*/, 1000,  410 },	/*  55 - ATC */
+	{  4000/*was 500*/, 1000,  10250 },	/*  56 - ATC */
+	{  4000/*was 500*/, 1000,  6875 },	/*  57 - ATC */
 	{  4000/*was 500*/, 1000,  223 },	/*  58 - ATC */
-	{  4000/*was 500*/, 1771,  92 },	/*  59 - ATC */
-	{  4000/*was 500*/, 105,   92 },	/*  60 - ATC */
+	{  4000/*was 500*/, 1000,  223 },	/*  59 - ATC */
+	{  4000/*was 500*/, 1000,  223 },	/*  60 - ATC */
 	{  1000/*was 500*/, 1000,  500 },	/*  61 */
 	{  1000/*was 500*/, 1000,  500 },	/*  62 */
-	{  1000/*was 500*/, 339,   92 },	/*  63 - ATC */
-	{  1000/*was 500*/, 105,   443 },	/*  64 - ATC */
+	{  1000/*was 500*/, 1000,  320 },	/*  63 - ATC */
+	{  1000/*was 500*/, 1000,  410 },	/*  64 - ATC */
 	{  1000/*was 500*/, 1000,  500 },	/*  65 */
 	{   500,    0,  825 },	/*  66 - ITS Cabinet Date / Time */
 	{  1000/*was 500*/, 1000,  500 },	/*  67 */
@@ -731,7 +729,6 @@ fiomsg_rx_update_frame
 {
 	struct list_head	*p_elem;		/* Ptr to list element being examined */
 	FIOMSG_RX_FRAME		*p_rx_elem;		/* Ptr to rx frame being examined */
-	FIOMSG_TX_FRAME		*p_tx_frame;	/* Next request frame in queue */
         FIO_NOTIFY_INFO         notify_info;
 
 	/* For each element in the list */
@@ -766,13 +763,8 @@ fiomsg_rx_update_frame
                                 p_rx_elem->info.last_seq++;
                                 if (p_rx_elem->info.success_rx < 4294967295L)
 					p_rx_elem->info.success_rx++;
-                                if (p_rx_elem->info.error_last_10) {
-									p_tx_frame = list_entry( p_port->tx_queue.next, FIOMSG_TX_FRAME, elem );
-									if (p_tx_frame->def_freq == FIO_HZ_ONCE)
-										p_rx_elem->info.error_last_10 = 0;
-									else
+                                if (p_rx_elem->info.error_last_10)
                                         p_rx_elem->info.error_last_10--;
-								}
                                 notify_info.status = FIO_FRAME_RECEIVED;
                                 notify_info.seq_number = p_rx_elem->info.last_seq;
                                 notify_info.count = (p_rx_elem->len - 2);
@@ -886,13 +878,13 @@ port.
 int
 fiomsg_port_comm_status
 (
-	FIO_PORT	port		/* port being looked at */
+	FIO_IOC_FIOD	*p_fiod		/* FIOD being looked at */
 )
 {
 	FIOMSG_PORT		*p_port;	/* Port on which to enable FIOD */
 
 	/* Get the port */
-	p_port = FIOMSG_P_PORT( port );
+	p_port = FIOMSG_P_PORT( p_fiod->port );
 
 	/* Return number of APPS that have enabled comm */
 	return ( p_port->comm_enabled );
@@ -1031,7 +1023,7 @@ fiomsg_port_open
 {
 	int channel;
 	void *context;
-	atc_spxs_config_t config = {ATC_SDLC, ATC_B614400, ATC_CLK_INTERNAL, ATC_CONTINUOUS};
+	atc_spxs_config_t config = {ATC_SDLC, ATC_B614400, ATC_CLK_INTERNAL, ATC_GATED};
 /* TEG */
 	/* Initialize */
 	/* Open SDLC driver for indicated port */
