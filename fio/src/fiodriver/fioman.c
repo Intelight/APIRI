@@ -631,6 +631,17 @@ fioman_remove_frame
     if (p_tx_elem->fiod.fiod == p_sys_fiod->fiod.fiod) {
       /* Does the frame number match one requested? */
       if (FIOMSG_PAYLOAD(p_tx_elem)->frame_no == frame_no) {
+		if (frame_no == FIOMAN_FRAME_NO_51) {
+			/* we need to clear the error last 10*/
+			struct list_head *rx_next;
+			FIOMSG_RX_FRAME *p_rx_elem;
+			list_for_each ( rx_next, &p_port->rx_fiod_list[ p_sys_fiod->fiod.fiod ] ) {
+				p_rx_elem = list_entry( rx_next, FIOMSG_RX_FRAME, elem);
+				if (FIOMSG_PAYLOAD( p_rx_elem )->frame_no == FIOMAN_FRAME_NO_51) {
+					p_rx_elem->info.error_last_10 = 1;
+				}
+			}
+		}
         list_del_init(p_elem);
         kfree(p_tx_elem);
         return 0;
