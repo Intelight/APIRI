@@ -638,7 +638,7 @@ fioman_remove_frame
 			FIOMSG_RX_FRAME *p_rx_elem;
 			list_for_each ( rx_next, &p_port->rx_fiod_list[ p_sys_fiod->fiod.fiod ] ) {
 				p_rx_elem = list_entry( rx_next, FIOMSG_RX_FRAME, elem);
-				if (FIOMSG_PAYLOAD( p_rx_elem )->frame_no == frame_no) {
+				if (FIOMSG_PAYLOAD( p_rx_elem )->frame_no == frame_no + 128) {
 					p_rx_elem->info.error_last_10 = 0;
 				}
 			}
