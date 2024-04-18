@@ -572,6 +572,55 @@ fioman_add_frame
 
 /*****************************************************************************/
 /*
+This function is used to remove a specific request frame and response, if any
+*/
+/*****************************************************************************/
+int
+fioman_remove_frame
+(
+	FIOMAN_SYS_FIOD	*p_sys_fiod,		/* FIOD of destined frame */
+	int frame_no
+)
+{
+	struct list_head	*p_elem;	/* Ptr to queue element being examined */
+	struct list_head	*p_next;	/* Temp Ptr to next for loop */
+	FIOMSG_TX_FRAME		*p_tx_elem;	/* Ptr to tx frame being examined */
+	FIOMSG_PORT		*p_port;	/* Port of Request Queue */
+
+	/* Search for frame in tx queue */
+	/* Get port to work on */
+	p_port = FIOMSG_P_PORT(p_sys_fiod->fiod.port);
+	/* For each element in the queue */
+	list_for_each_safe(p_elem, p_next, &p_port->tx_queue) {
+	/* Get the request frame for this queue element */
+		p_tx_elem = list_entry(p_elem, FIOMSG_TX_FRAME, elem);
+		/* See if current element matches fiod */
+		if (p_tx_elem->fiod.fiod == p_sys_fiod->fiod.fiod) {
+			/* Does the frame number match one requested? */
+			if (FIOMSG_PAYLOAD(p_tx_elem)->frame_no == frame_no) {
+				/* check if the default frequency is send once */
+				if (p_tx_elem->def_freq < FIO_HZ_1) {
+					/* if it is, we need to clear the error last 10*/
+					struct list_head *rx_next;
+					FIOMSG_RX_FRAME *p_rx_elem;
+					list_for_each ( rx_next, &p_port->rx_fiod_list[ p_sys_fiod->fiod.fiod ] ) {
+						p_rx_elem = list_entry( rx_next, FIOMSG_RX_FRAME, elem);
+						if (FIOMSG_PAYLOAD( p_rx_elem )->frame_no == frame_no + 128) {
+							p_rx_elem->info.error_last_10 = 0;
+						}
+					}
+				}
+				list_del_init(p_elem);
+				kfree(p_tx_elem);
+				return 0;
+			}
+		}
+	}
+	return(-EINVAL);
+}
+
+/*****************************************************************************/
+/*
 This function adds the default frames for a port (given the indicated FIOD)
 to the request frame list for this port, for the first time the port is
 accessed.
