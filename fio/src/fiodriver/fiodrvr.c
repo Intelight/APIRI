@@ -280,6 +280,6 @@ $Log$
 /*****************************************************************************/
 MODULE_AUTHOR( "Thomas E. Gauger tgauger@vanteon.com" );
 MODULE_DESCRIPTION( "FIO API Module for ATC" );
-MODULE_VERSION( "1.34" );
+MODULE_VERSION( "1.35" );
 MODULE_LICENSE("GPL");
 
