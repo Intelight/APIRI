@@ -632,7 +632,7 @@ fioman_remove_frame
       /* Does the frame number match one requested? */
       if (FIOMSG_PAYLOAD(p_tx_elem)->frame_no == frame_no) {
 		/* check if the default frequency is send once */
-		if (p_tx_elem->def_freq < FIO_HZ_1) {
+		if (p_tx_elem->def_freq == FIO_HZ_ONCE) {
 			/* if it is, we need to clear the error last 10*/
 			struct list_head *rx_next;
 			FIOMSG_RX_FRAME *p_rx_elem;
