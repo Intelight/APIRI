@@ -3681,6 +3681,11 @@ int fioman_inputs_trans_set
 	if (count > FIO_INPUT_POINTS_BYTES)
 		count = FIO_INPUT_POINTS_BYTES;
 
+	p_sys_fiod = p_app_fiod->p_sys_fiod;
+	if (copy_from_user(input_trans_map, p_arg->data, count)) {
+		return -EFAULT;
+	}
+
 	/* Save app-based values */
 	memcpy(p_app_fiod->input_transition_map, input_trans_map, count);
   
