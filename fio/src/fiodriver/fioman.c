@@ -3686,7 +3686,6 @@ int fioman_inputs_trans_set
 		return -EFAULT;
 	}
 
-
 	/* Save app-based values */
 	memcpy(p_app_fiod->input_transition_map, input_trans_map, count);
   
