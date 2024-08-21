@@ -1704,6 +1704,40 @@ fioman_tx_frame_10_11
 		FIOMSG_PAYLOAD(p_tx_frame)->frame_info[6 + i] =
 			p_sys_fiod->outputs_plus[3 + i] | p_sys_fiod->outputs_minus[3 + i];
 	}
+
+#ifdef NEW_WATCHDOG
+  /* Handle watchdog output pin for this module */
+  if ((p_sys_fiod->watchdog_output >= 0)
+    && (p_sys_fiod->watchdog_rate > FIO_HZ_ONCE)
+    && (p_tx_frame->cur_freq > FIO_HZ_ONCE)) {
+    if (p_sys_fiod->watchdog_countdown == 0) {
+      /* toggle output */
+      p_sys_fiod->watchdog_state = !p_sys_fiod->watchdog_state;
+      /* refresh count */
+      p_sys_fiod->watchdog_countdown =
+        fiomsg_get_hertz(p_tx_frame->cur_freq) / fiomsg_get_hertz(p_sys_fiod->watchdog_rate);
+    }
+    p_sys_fiod->watchdog_countdown--;
+    if (p_sys_fiod->watchdog_output < 24) {
+      if (p_sys_fiod->watchdog_state) {
+        FIOMSG_PAYLOAD(p_tx_frame)->frame_info[p_sys_fiod->watchdog_output/4] |= 1 << ((p_sys_fiod->watchdog_output%4)*2);
+        FIOMSG_PAYLOAD(p_tx_frame)->frame_info[p_sys_fiod->watchdog_output/4] |= 1 << (((p_sys_fiod->watchdog_output%4)*2)+1);
+      } else {
+        FIOMSG_PAYLOAD(p_tx_frame)->frame_info[p_sys_fiod->watchdog_output/4] &= ~(1 << ((p_sys_fiod->watchdog_output%4)*2));
+        FIOMSG_PAYLOAD(p_tx_frame)->frame_info[p_sys_fiod->watchdog_output/4] &= ~(1 << (((p_sys_fiod->watchdog_output%4)*2)+1));
+      }
+    } else {
+      if (p_sys_fiod->watchdog_state)
+        FIOMSG_PAYLOAD(p_tx_frame)->frame_info[3 + (p_sys_fiod->watchdog_output/8)] |= 1 << (p_sys_fiod->watchdog_output%8);
+      else
+        FIOMSG_PAYLOAD(p_tx_frame)->frame_info[3 + (p_sys_fiod->watchdog_output/8)] &= ~(1 << (p_sys_fiod->watchdog_output%8));
+    }
+  }
+#else
+	/* Clear the trigger condition now that the watchdog output is sent */
+	p_sys_fiod->watchdog_trigger_condition = false;
+#endif
+
 	/* TEG DEL */
 	/*if ((p_sys_fiod->outputs_plus[0]|p_sys_fiod->outputs_plus[1]|p_sys_fiod->outputs_plus[2]) != 0xff)
 		pr_debug( "UPDATING Frame 10/11: %x %x %x %x %x %x\n",
@@ -1787,6 +1821,32 @@ fioman_tx_frame_12_13
 		FIOMSG_PAYLOAD(p_tx_frame)->frame_info[i] =
 			p_sys_fiod->outputs_plus[i] | p_sys_fiod->outputs_minus[i];
 	}
+
+#ifdef NEW_WATCHDOG
+  /* Handle watchdog output pin for this module */
+  if ((p_sys_fiod->watchdog_output >= 0)
+    && (p_sys_fiod->watchdog_rate > FIO_HZ_ONCE)
+    && (p_tx_frame->cur_freq > FIO_HZ_ONCE)) {
+    if (p_sys_fiod->watchdog_countdown == 0) {
+      /* toggle output */
+      p_sys_fiod->watchdog_state = !p_sys_fiod->watchdog_state;
+      /* refresh count */
+      p_sys_fiod->watchdog_countdown =
+        fiomsg_get_hertz(p_tx_frame->cur_freq) / fiomsg_get_hertz(p_sys_fiod->watchdog_rate);
+    }
+    p_sys_fiod->watchdog_countdown--;
+    if (p_sys_fiod->watchdog_state)
+      FIOMSG_PAYLOAD(p_tx_frame)->frame_info[p_sys_fiod->watchdog_output/8]
+        |= (1 << (p_sys_fiod->watchdog_output%8));
+    else
+      FIOMSG_PAYLOAD(p_tx_frame)->frame_info[p_sys_fiod->watchdog_output/8]
+        &= ~(1 << (p_sys_fiod->watchdog_output%8));
+  }
+#else
+	/* Clear the trigger condition now that the watchdog output is sent */
+	p_sys_fiod->watchdog_trigger_condition = false;
+#endif
+
 	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
 	/* TEG DEL */
 	/*pr_debug("UPDATING Frame 10/11: %x %x %x %x %x %x\n",
