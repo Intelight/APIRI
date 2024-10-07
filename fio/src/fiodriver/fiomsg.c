@@ -208,6 +208,8 @@ to clock ticks by fiomsg_tx_next_when().
 
 /* Values taken from NEMA-TS2 and ATC specifications where appropriate. */
 /* Other values open for interpretation. */
+/* One interpretation: (((PAYLOAD_BITS/5)*6)+32)/(BITRATE*0.98) */
+/* (based on worst-case zero-bit insertion and 2% bitrate error) */
 /* Service/Response/Command Times */
 static	FIOMSG_TX_DEAD_TIME_CALC	dead_time[] =
 {
@@ -291,10 +293,10 @@ static	FIOMSG_TX_DEAD_TIME_CALC	dead_time[] =
 	{  1000/*was 500*/, 1000,  500 },	/*  77 */
 	{  1000/*was 500*/, 1000,  500 },	/*  78 */
 	{  1000/*was 500*/, 1000,  500 },	/*  79 */
-	{  1000/*was 500*/, 1000,  500 },	/*  80 */
-	{  1000/*was 500*/, 1000,  500 },	/*  81 */
-	{  1000/*was 500*/, 1000,  500 },	/*  82 */
-	{  1000/*was 500*/, 1000,  500 },	/*  83 */
+	{  500, 755, 101 },	/*  80 - ATC */
+	{  500, 4055, 308 },	/*  81 - ATC */
+	{  500, 8264, 101 },	/*  82 - ATC */
+	{  500, 5968, 308 },	/*  83 - ATC */
 	{  1000/*was 500*/, 1000,  500 },	/*  84 */
 	{  1000/*was 500*/, 1000,  500 },	/*  85 */
 	{  1000/*was 500*/, 1000,  500 },	/*  86 */
