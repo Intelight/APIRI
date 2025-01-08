@@ -71,7 +71,7 @@ void print_io(unsigned char *outputs, unsigned char *inputs, int len)
 {
 	static unsigned char last_outputs[128];
 	
-	printf("Output pattern:");
+	printf("Out:");
 	int ones = 0, flips = 0;
 	for (int i=0; i<len; i++) {
 		for(int j=0; j<8; j++) {
@@ -81,12 +81,12 @@ void print_io(unsigned char *outputs, unsigned char *inputs, int len)
 				flips++;
 		}
 		last_outputs[i] = outputs[i];
-		printf(" %02x", outputs[i]);
+		printf("%02x", outputs[i]);
 	}
-	printf("[%d][%d]\n", ones, flips);
-	printf("Input pattern :");
+	//printf("[%d][%d]\n", ones, flips);
+	printf("\nIn :");
 	for (int i=0; i<len; i++) {
-		printf(" %02x", inputs[i]);
+		printf("%02x", inputs[i]);
 	}
 	printf("\n");
 }
@@ -112,6 +112,7 @@ int loop_test(FIO_DEVICE_TYPE type, unsigned char *outputs_plus, int len)
 	unsigned char outputs_minus[FIO_INPUT_POINTS_BYTES] = {0};
 	unsigned char inputs[FIO_INPUT_POINTS_BYTES] = {0};
 	fio_hm_heartbeat(fio_handle);
+	int bitpos = 0;
 
 	if (type == FIOTS1) {
 		// Fix quirks in TS1 loopback cable 
@@ -127,16 +128,23 @@ int loop_test(FIO_DEVICE_TYPE type, unsigned char *outputs_plus, int len)
 		// Fix quirks in TS1 loopback cable
 		inputs[14] &= 0x3f;
 		
-	for (int j=0; j<len; j++) {
-		if (inputs[j] != outputs_plus[j]) {
+	for (int i=0; i<len; i++) {
+		if (inputs[i] != outputs_plus[i]) {
 			// Test failed
-			if (!quiet_log)
+			if (!quiet_log) {
 				print_io(outputs_plus, inputs, len);
-			return -1;
+			}
+			bitpos = outputs_plus[i];
+			for(int j=0; j<8; j++) {
+				if (bitpos & (1<<j)) {
+					return j+1;
+				}
+			}
 		}
 	}
-	if (verbose_log)
+	//if (verbose_log)
 		print_io(outputs_plus, inputs, len);
+		printf("\x1b[2A");
 		
 	return 0;
 }
@@ -151,7 +159,7 @@ int transbuf_test(FIO_DEVICE_TYPE type, int count)
 	int number_of_input_bytes = (type == FIO332)?8:FIO_INPUT_POINTS_BYTES;
 	fio_hm_heartbeat(fio_handle);
   int ret = 0;
-  printf("creating %d transitions...\n", count);
+  printf("creating %d transitions...           \n", count);
 
   // configure inputs for transition reporting
   unsigned char transitions[FIO_INPUT_POINTS_BYTES];
@@ -212,10 +220,13 @@ int transbuf_test(FIO_DEVICE_TYPE type, int count)
   wait_for_frame(182);
   wait_for_frame(182);
   if ((trans_count = fio_fiod_inputs_trans_read(fio_handle, dev_handle, &status, trans_buf, 1024)) > 0) {
-    if (trans_count < count) {
-      printf("Error in trans count:exp %d act %d\n", count, trans_count);
-      ret = -1;
-    } 
+    if ((trans_count < count) || (status != FIO_TRANS_SUCCESS)) {
+	    if (count <= 1024) {
+		printf("Error in trans count:exp %d act %d\n", count, trans_count);
+		ret = -1;
+	}
+	printf("Status %d rcvd for trans count %d\n", status, trans_count);
+    }
     printf("read %d transitions from buffer\n", trans_count);
   } else {
       printf("Error reading transitions: ret=%d\n", trans_count);
@@ -229,7 +240,7 @@ cleanup:
   }
   fio_fiod_inputs_trans_set(fio_handle, dev_handle, transitions, number_of_input_bytes);
   wait_for_frame(179);
-  wait_for_frame(179);
+  //wait_for_frame(179);
   
   return ret;
 }
@@ -327,19 +338,19 @@ int main(int argc, char **argv)
 	// Enable this FIO module
 	fio_fiod_enable(fio_handle, dev_handle);
 	// Perform "walking 1" bit pattern test
-    printf("walking 1 bit test...\n");
+    printf("walking 1 bit test...                  \n");
 	for (int iter = 0; iter<number_of_input_bytes; iter++) {
 		memset(outputs_plus, 0, sizeof outputs_plus);
 		for(int j=0; j<8; j++) {
 			outputs_plus[iter] = (1<<j);
-			if (loop_test(fio_dev_type, outputs_plus, number_of_input_bytes) != 0) {
-				printf("Error after %d iterations\n", iter+1);
+			if ((err = loop_test(fio_dev_type, outputs_plus, number_of_input_bytes)) != 0) {
+				printf("Error I/O byte-bit %d-%d\n", iter+1, err);
 				goto error_dereg;
 			}
 		}
 	}
 	// Perform muliple bit pattern test
-    printf("random multiple bits test...\n");
+    printf("random multiple bits test...           \n");
 	for (int iter=0; iter<100; iter++) {
 		// Obtain a random bit pattern for outputs of length (8*FIO_OUTPUT_POINTS_BYTES)
 		//getrandom(outputs_plus, sizeof outputs_plus, 0);
@@ -359,12 +370,23 @@ int main(int argc, char **argv)
   
   // Perform transition buffer test
   // (The384Test, The640Test, The1152Test, The1276Test, OutputBitTest, TheTBGBitTest)
-  printf("transition buffer tests...\n");
+  printf("transition buffer tests...             \n");
   if (transbuf_test(fio_dev_type, 384) != 0) {
     printf("Error: failed 384 transition test\n");
     goto error_dereg;
   }
   
+  if (transbuf_test(fio_dev_type, 640) != 0) {
+    printf("Error: failed 640 transition test\n");
+    goto error_dereg;
+  }
+  
+  if (transbuf_test(fio_dev_type, 1152) != 0) {
+	
+    printf("Error: failed 1152 transition test\n");
+    goto error_dereg;
+  }
+
 	printf("Test Passed\n");
 	fio_fiod_disable(fio_handle, dev_handle);
 	fio_fiod_deregister(fio_handle, dev_handle);
