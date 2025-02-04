@@ -1166,7 +1166,7 @@ void fiomsg_tx_notify( FIOMSG_TX_FRAME *frame )
 }
 
 /*****************************************************************************/
-
+static int dbg_stop = 0;
 /*****************************************************************************/
 /*
 This function is used to actually send a request frame.
@@ -1185,12 +1185,13 @@ fiomsg_tx_send_frame
 {
 	int status;
 
-	pr_debug("tx_send_frame(%lu) #%d, freq=%d len=%d: %x %x %x\n",
+if (!dbg_stop) {
+		pr_debug("tx_send_frame(%lu) #%d, freq=%d len=%d: %x %x %x\n",
 		FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME), p_tx_frame->frame[2], p_tx_frame->cur_freq, p_tx_frame->len,
 		p_tx_frame->frame[0], p_tx_frame->frame[1], p_tx_frame->frame[2]);
 	if( (status = sdlc_kernel_write(p_port->context, FIOMSG_PAYLOAD(p_tx_frame), p_tx_frame->len)) < 0 )
 		printk( KERN_ALERT "write error %d", status );
-	/* TEG */
+}	/* TEG */
 	/*FIOMSG_FRAME	*p_payload = FIOMSG_PAYLOAD( p_tx_frame );
 	printk( KERN_ALERT "Frame (%d, %d) sending, jiffies(%lu)\n", p_payload->frame_no, cnt++, FIOMSG_CURRENT_TIME );*/
 	/* TEG */
@@ -1387,11 +1388,14 @@ fiomsg_timer_callback_rtn fiomsg_rx_task( fiomsg_timer_callback_arg arg )
 		frames_read++;
 	}
 	if( frames_read == 0 ) {
-		/* No frame to read, show no response */
-		pr_debug( KERN_ALERT "No RX frame read!(%lu), expected #%d\n", FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME),
+		if (!dbg_stop) {
+			/* No frame to read, show no response */
+			pr_info( KERN_ALERT "No RX frame read!(%lu), expected #%d\n", FIOMSG_TIME_TO_NSECS(FIOMSG_CURRENT_TIME),
 				p_rx_pend->frame_no);
-		/* Update rx error count */
-		fiomsg_rx_update_frame( p_port, p_rx_pend, false );
+			/* Update rx error count */
+			fiomsg_rx_update_frame( p_port, p_rx_pend, false );
+		}
+		dbg_stop = 1;
 	}
 	/* Unlock resources */
 	/* TEG - DO NOT LOCK SEMAPHORES, MUST USE SPINLOCKS */
