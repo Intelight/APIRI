@@ -3305,14 +3305,17 @@ fioman_rx_frame_177
 	/* timestamp */
 
 	/* reset status error flags */
-pr_debug("fioman_rx_frame_177: status=%x\n", p_sys_fiod->status);
+	pr_debug("fioman_rx_frame_177: status=%x\n", p_sys_fiod->status);
 	if (p_sys_fiod->status & 0xc1) {/* P, E or W bits */
 		p_sys_fiod->status_reset = p_sys_fiod->status & 0xc1;
 		/* schedule frame 51 to reconfigure input point filters */
-    /* and reconfigure input transition monitoring */
-    p_sys_fiod->inputs_configured = false;
-    fiomsg_tx_add_frame(FIOMSG_P_PORT(p_sys_fiod->fiod.port), fioman_ready_frame_51(p_sys_fiod));
-    fiomsg_rx_add_frame(FIOMSG_P_PORT(p_sys_fiod->fiod.port), fioman_ready_frame_179(p_sys_fiod));
+		/* and reconfigure input transition monitoring */
+		p_sys_fiod->inputs_configured = false;
+		FIOMSG_PORT *p_port = FIOMSG_P_PORT(p_sys_fiod->fiod.port);
+		FIOMSG_TX_FRAME	*p_tx_frame = fioman_ready_frame_51(p_sys_fiod);
+		FIOMSG_RX_FRAME *p_rx_frame = fioman_ready_frame_179(p_sys_fiod);
+		fiomsg_tx_add_frame(p_port, p_tx_frame);
+		fiomsg_rx_add_frame(p_port, p_rx_frame);
 	} else
 		p_sys_fiod->status_reset = 0;
 
