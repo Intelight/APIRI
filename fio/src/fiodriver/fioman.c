@@ -626,10 +626,11 @@ fioman_add_frame
           /* Add to TX queue */
           txframe->cur_freq = p_sys_fiod->frame_frequency_table[frame_no];
           fiomsg_tx_add_frame(FIOMSG_P_PORT(p_sys_fiod->fiod.port), txframe);
-          if (rxframe != NULL)
+          if (rxframe != NULL) {
             /* Add to RX queue */
             fiomsg_rx_add_frame(FIOMSG_P_PORT(p_sys_fiod->fiod.port), rxframe);
-            return 0;
+          }
+          return 0;
         }
         
         return PTR_ERR(rxframe);
@@ -3615,7 +3616,6 @@ int fioman_ts2_port1_state
 	FIO_IOC_TS2_PORT1_STATE	*p_arg
 )
 {
-	FIOMAN_PRIV_DATA	*p_priv = filp->private_data;	/* Access Apps data */
         FIO_PORT                port = p_arg->port;
         FIOMSG_PORT             *p_port;
         int status;
@@ -3984,13 +3984,16 @@ int fioman_inputs_trans_set
     input_trans_map[0], input_trans_map[1], input_trans_map[2], input_trans_map[3],
     input_trans_map[4], input_trans_map[5], input_trans_map[6], input_trans_map[7]);*/
 
-  /* If any sys_fiod input config values have changed, we must schedule frame #51 */
-  p_sys_fiod->inputs_configured = false;
-  /* Ready frame 51 for this device */
-  if (!fioman_frame_is_scheduled(p_sys_fiod, FIOMAN_FRAME_NO_51)) {
-    p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_51] = FIO_HZ_10;
-    return fioman_add_frame(FIOMAN_FRAME_NO_51, p_sys_fiod);
-  }
+        /* If any sys_fiod input config values have changed, we must schedule frame #51 */
+        /* Does this fiod support frame 51? */
+        if (p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_51] != -1) {
+                p_sys_fiod->inputs_configured = false;
+                /* Ready frame 51 for this device */
+                if (!fioman_frame_is_scheduled(p_sys_fiod, FIOMAN_FRAME_NO_51)) {
+                        p_sys_fiod->frame_frequency_table[FIOMAN_FRAME_NO_51] = FIO_HZ_10;
+                        return fioman_add_frame(FIOMAN_FRAME_NO_51, p_sys_fiod);
+                }
+        }
 
   return 0;
 }
@@ -4062,7 +4065,7 @@ int fioman_inputs_trans_read
 
 	p_sys_fiod = p_app_fiod->p_sys_fiod;
 
-	/* TBD: return app-specific transition buffer entries */
+	/* return app-specific transition buffer entries */
 	spin_lock_irqsave(&p_sys_fiod->lock, flags);
 	count = FIOMAN_FIFO_LEN(p_app_fiod->transition_fifo)/sizeof(FIO_TRANS_BUFFER);
         status = p_app_fiod->transition_status;

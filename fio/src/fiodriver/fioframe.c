@@ -3247,31 +3247,68 @@ This function is called when a frame 148/151 is RX'ed.
 */
 /*****************************************************************************/
 
-void
-fioman_rx_frame_148_151
-(
-	FIOMSG_RX_FRAME		*p_rx_frame		/* Frame received */
-)
-{
-	FIOMAN_SYS_FIOD		*p_sys_fiod;	/* For access to System info */
-	int i;
-	unsigned long flags;
+void fioman_rx_frame_148_151(FIOMSG_RX_FRAME *p_rx_frame /* Frame received */
+) {
+  FIOMAN_SYS_FIOD *p_sys_fiod; /* For access to System info */
+  FIOMAN_APP_FIOD *p_app_fiod; /* Ptr to app fiod structure */
+  FIO_TRANS_BUFFER entry;
+  struct list_head *p_app_elem; /* Ptr to app element being examined */
+  int i;
+  unsigned long flags;
+  uint8_t inputs[2] = {0}, trans[2] = {0};
 
-	/* Get access to system info */
-	p_sys_fiod = (FIOMAN_SYS_FIOD *)p_rx_frame->fioman_context;
+  /* Get access to system info */
+  p_sys_fiod = (FIOMAN_SYS_FIOD *)p_rx_frame->fioman_context;
 
-
-	/* Save data into FIOD System buffers */
-	spin_lock_irqsave(&p_sys_fiod->lock, flags);
-	for(i=0;i<2;i++) {
-		p_sys_fiod->inputs_raw[i] = FIOMSG_PAYLOAD(p_rx_frame)->frame_info[i+32];
-	}
-	spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
-	/* TEG DEL */
-		/*pr_debug("UPDATING Frame 148/151: %x %x\n",
-			p_sys_fiod->inputs_raw[0], p_sys_fiod->inputs_raw[1] );*/
-	/* TEG DEL */
-
+  /* Save data into FIOD System buffers */
+  spin_lock_irqsave(&p_sys_fiod->lock, flags);
+  for (i = 0; i < 2; i++) {
+    inputs[i] = p_sys_fiod->inputs_raw[i] =
+        FIOMSG_PAYLOAD(p_rx_frame)->frame_info[i + 32];
+    trans[i] = FIOMSG_PAYLOAD(p_rx_frame)->frame_info[i + 34];
+  }
+  // Add transitions based on timestamps
+  for (i = 0; i < 16; i++) {
+    if (trans[i / 8] & (1 << (i % 8))) {
+      /* Update each app transition fifo */
+      entry.input_point = i;
+      entry.state = (inputs[i / 8] & (1 << (i % 8))) ? 1 : 0;
+      entry.timestamp = FIOMSG_PAYLOAD(p_rx_frame)->frame_info[i * 2];
+      entry.timestamp |= FIOMSG_PAYLOAD(p_rx_frame)->frame_info[(i * 2) + 1]
+                         << 8;
+      // push entry to each app_fiod fifo
+      list_for_each(p_app_elem, &p_sys_fiod->app_fiod_list) {
+        /* Get a ptr to this list entry */
+        p_app_fiod = list_entry(p_app_elem, FIOMAN_APP_FIOD, sys_elem);
+        if ((p_app_fiod->transition_status != FIO_TRANS_APP_OVERRUN) &&
+            ((entry.input_point == 0x7f) /* rollover entry */
+             || FIO_BIT_TEST(p_app_fiod->input_transition_map,
+                             entry.input_point))) {
+          if (FIOMAN_FIFO_AVAIL(p_app_fiod->transition_fifo) <
+              sizeof(FIO_TRANS_BUFFER)) {
+            // app fifo status is overflow
+            if (p_app_fiod->transition_status == FIO_TRANS_SUCCESS)
+              p_app_fiod->transition_status = FIO_TRANS_APP_OVERRUN;
+          } else {
+            FIOMAN_FIFO_PUT(p_app_fiod->transition_fifo, &entry,
+                            sizeof(FIO_TRANS_BUFFER));
+            pr_debug("fioman_rx_frame_148/151:transition:ip=%d state=%d "
+                     "time=%d:fifo@%p=%d, st=%d\n",
+                     entry.input_point, entry.state, entry.timestamp,
+                     &p_app_fiod->transition_fifo,
+                     kfifo_len(&p_app_fiod->transition_fifo),
+                     p_app_fiod->transition_status);
+          }
+        }
+      }
+      p_sys_fiod->input_transition_block++;
+    }
+  }
+  spin_unlock_irqrestore(&p_sys_fiod->lock, flags);
+  /* TEG DEL */
+  /*pr_debug("UPDATING Frame 148/151: %x %x\n",
+          p_sys_fiod->inputs_raw[0], p_sys_fiod->inputs_raw[1] );*/
+  /* TEG DEL */
 }
 
 /*****************************************************************************/
