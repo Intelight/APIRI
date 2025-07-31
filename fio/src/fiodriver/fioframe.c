@@ -1846,19 +1846,19 @@ fioman_tx_frame_0
 				if ( (output = p_sys_fiod->channel_map_green[ii]) > 0 ) {
 					if (FIO_BIT_TEST(p_sys_fiod->outputs_plus, (output-1)))
 						FIOMSG_PAYLOAD(p_tx_frame)->frame_info[ii/4] |= (0x1<<(2*(ii%4)));
-					if (IS_TFBIU(p_sys_fiod->fiod.fiod) && FIO_BIT_TEST(p_sys_fiod->outputs_minus, (output-1)))
+					if (FIO_BIT_TEST(p_sys_fiod->outputs_minus, (output-1)))
 						FIOMSG_PAYLOAD(p_tx_frame)->frame_info[ii/4] |= (0x2<<(2*(ii%4)));
 				}
 				if ( (output = p_sys_fiod->channel_map_yellow[ii]) > 0 ) {
 					if (FIO_BIT_TEST(p_sys_fiod->outputs_plus, (output-1)))
 						FIOMSG_PAYLOAD(p_tx_frame)->frame_info[4+ii/4] |= (0x1<<(2*(ii%4)));
-					if (IS_TFBIU(p_sys_fiod->fiod.fiod) && FIO_BIT_TEST(p_sys_fiod->outputs_minus, (output-1)))
+					if (FIO_BIT_TEST(p_sys_fiod->outputs_minus, (output-1)))
 						FIOMSG_PAYLOAD(p_tx_frame)->frame_info[4+ii/4] |= (0x2<<(2*(ii%4)));
 				}
 				if ( (output = p_sys_fiod->channel_map_red[ii]) > 0 ) {
 					if (FIO_BIT_TEST(p_sys_fiod->outputs_plus, (output-1)))
 						FIOMSG_PAYLOAD(p_tx_frame)->frame_info[8+ii/4] |= (0x1<<(2*(ii%4)));
-					if (IS_TFBIU(p_sys_fiod->fiod.fiod) && FIO_BIT_TEST(p_sys_fiod->outputs_minus, (output-1)))
+					if (FIO_BIT_TEST(p_sys_fiod->outputs_minus, (output-1)))
 						FIOMSG_PAYLOAD(p_tx_frame)->frame_info[8+ii/4] |= (0x2<<(2*(ii%4)));
 				}
 			}
