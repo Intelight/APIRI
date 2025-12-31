@@ -20,8 +20,6 @@
  * 
  * 
  */
-
-
 #include <stdio.h>
 #include <unistd.h>
 #include <stdbool.h>
@@ -31,139 +29,151 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <getopt.h>
 #include <fio.h>
 
 bool verbose_log = false;
 bool quiet_log = false;
-
+bool extended_test = false;
 bool fio_signal = false;
-void signal_handler(int sig)
-{
-	fio_signal = true;
+void signal_handler(int sig) {
+  fio_signal = true;
 }
 
-int get_module_type(void)
-{
-	unsigned char buffer[16];
-	
-	// Use low-level method to check for FIO332 or FIOTS1
-	int sp5_fd = open("/dev/sp5s", O_RDWR);
-	if (sp5_fd < 0) {
-		printf("Failed to open /dev/sp5s\n");
-		return -1;
-	}
-	buffer[0] = 20;
-	buffer[1] = 0x83;
-	buffer[2] = 60;
-	write(sp5_fd, &buffer[0], 3);
-	struct pollfd sp5_poll_fd = { .fd = sp5_fd, .events = POLLIN|POLLPRI };
-	if ((poll(&sp5_poll_fd, 1, 500) != 1)
-		|| (read(sp5_fd, buffer, 4) < 4)) {
-		printf("No response to module id cmd\n");
-		close(sp5_fd);
-		return -1;
-	}
-	close(sp5_fd);
-	return buffer[3];
+void print_usage(const char* prog_name) {
+  printf("Usage: %s [OPTIONS]\n", prog_name);
+  printf("Options:\n");
+  printf("  -s, --silent     Silent logging (default)\n");
+  printf("  -v, --verbose    Verbose logging\n");
+  printf("  -e, --extended   Extended testing\n");
+  printf("  -h, --help       Display this help message\n");
 }
 
-void print_io(unsigned char *outputs, unsigned char *inputs, int len)
-{
-	static unsigned char last_outputs[128];
-	
-	printf("Out:");
-	int ones = 0, flips = 0;
-	for (int i=0; i<len; i++) {
-		for(int j=0; j<8; j++) {
-			if (outputs[i]&(0x1<<j))
-				ones++;
-			if ((outputs[i]&(0x1<<j)) != (last_outputs[i]&(0x1<<j)))
-				flips++;
-		}
-		last_outputs[i] = outputs[i];
-		printf("%02x", outputs[i]);
-	}
-	//printf("[%d][%d]\n", ones, flips);
-	printf("\nIn :");
-	for (int i=0; i<len; i++) {
-		printf("%02x", inputs[i]);
-	}
-	printf("\n");
+int get_module_type(void) {
+  unsigned char buffer[16];
+
+  // Use low-level method to check for FIO332 or FIOTS1
+  int sp5_fd = open("/dev/sp5s", O_RDWR);
+  if (sp5_fd < 0) {
+    printf("Failed to open /dev/sp5s\n");
+    return -1;
+  }
+  buffer[0] = 20;
+  buffer[1] = 0x83;
+  buffer[2] = 60;
+  write(sp5_fd, &buffer[0], 3);
+  struct pollfd sp5_poll_fd = {.fd = sp5_fd, .events = POLLIN | POLLPRI};
+  if ((poll(&sp5_poll_fd, 1, 500) != 1) || (read(sp5_fd, buffer, 4) < 4)) {
+    printf("No response to module id cmd\n");
+    close(sp5_fd);
+    return -1;
+  }
+  close(sp5_fd);
+  return buffer[3];
+}
+
+void print_io(unsigned char* outputs, unsigned char* inputs, int len) {
+  static unsigned char last_outputs[128];
+
+  printf("Out:");
+  int ones = 0, flips = 0;
+  for (int i = 0; i < len; i++) {
+    for (int j = 0; j < 8; j++) {
+      if (outputs[i] & (0x1 << j))
+        ones++;
+      if ((outputs[i] & (0x1 << j)) != (last_outputs[i] & (0x1 << j)))
+        flips++;
+    }
+    last_outputs[i] = outputs[i];
+    printf("%02x", outputs[i]);
+  }
+  //printf("[%d][%d]\n", ones, flips);
+  printf("\nIn :");
+  for (int i = 0; i < len; i++) {
+    printf("%02x", inputs[i]);
+  }
+  printf("\n");
 }
 
 FIO_APP_HANDLE fio_handle;
 FIO_DEV_HANDLE dev_handle;
 
-void wait_for_frame(unsigned int frame_num)
-{
-  //usleep(200000);
-	fio_signal = false;
-	fio_fiod_frame_notify_register(fio_handle, dev_handle, frame_num, FIO_NOTIFY_ONCE);
-	// Wait for next input frame response (notification signal?)
-	sleep(1);
-	if(fio_signal == false) {
-		// Error no response frame after timeout
-		printf("Response frame %d notification timeout occurred\n", frame_num);
-	}
+void wait_for_frame(unsigned int frame_num) {
+  int frame_size = 0;
+  unsigned int seq_num = 0, last_seq_num = 0;
+
+  do {
+    if ((frame_size == 0) || (seq_num == last_seq_num)) {
+      usleep(200000);  //200ms
+      last_seq_num = seq_num;
+    }
+    else if (seq_num > last_seq_num) {
+      break;
+    }
+    frame_size = fio_fiod_frame_size(fio_handle, dev_handle, frame_num, &seq_num);
+    //printf("waiting for frame %d: (sz=%d, seq=%d, last=%d)\n", frame_num, frame_size, seq_num, last_seq_num);
+  } while (frame_size >= 0);
+  if (frame_size < 0) {
+    // Error no response frame after timeout
+    printf("Response frame %d timeout occurred\n", frame_num);
+  }
 }
 
-int loop_test(FIO_DEVICE_TYPE type, unsigned char *outputs_plus, int len)
-{
-	unsigned char outputs_minus[FIO_INPUT_POINTS_BYTES] = {0};
-	unsigned char inputs[FIO_INPUT_POINTS_BYTES] = {0};
-	fio_hm_heartbeat(fio_handle);
-	int bitpos = 0;
+int loop_test(FIO_DEVICE_TYPE type, unsigned char* outputs_plus, int len) {
+  unsigned char outputs_minus[FIO_INPUT_POINTS_BYTES] = {0};
+  unsigned char inputs[FIO_INPUT_POINTS_BYTES] = {0};
+  fio_hm_heartbeat(fio_handle);
+  int bitpos = 0;
 
-	if (type == FIOTS1) {
-		// Fix quirks in TS1 loopback cable 
-		outputs_plus[9] &= 0x3f; outputs_plus[9] |= (outputs_plus[10] & 0xc0);
-		outputs_plus[13] = outputs_plus[11];
-		outputs_plus[14] = outputs_plus[12] & 0x3f;
-	}
-	
-	fio_fiod_outputs_set(fio_handle, dev_handle, outputs_plus, outputs_minus, FIO_INPUT_POINTS_BYTES);
-  wait_for_frame(180);    
-	fio_fiod_inputs_get(fio_handle, dev_handle, FIO_INPUTS_RAW, inputs, sizeof(inputs));
-	if (type == FIOTS1)
-		// Fix quirks in TS1 loopback cable
-		inputs[14] &= 0x3f;
-		
-	for (int i=0; i<len; i++) {
-		if (inputs[i] != outputs_plus[i]) {
-			// Test failed
-			if (!quiet_log) {
-				print_io(outputs_plus, inputs, len);
-			}
-			bitpos = outputs_plus[i];
-			for(int j=0; j<8; j++) {
-				if (bitpos & (1<<j)) {
-					return j+1;
-				}
-			}
-		}
-	}
-	//if (verbose_log)
-		print_io(outputs_plus, inputs, len);
-		printf("\x1b[2A");
-		
-	return 0;
+  if (type == FIOTS1) {
+    // Fix quirks in TS1 loopback cable
+    outputs_plus[9] &= 0x3f;
+    outputs_plus[9] |= (outputs_plus[10] & 0xc0);
+    outputs_plus[13] = outputs_plus[11];
+    outputs_plus[14] = outputs_plus[12] & 0x3f;
+  }
+
+  fio_fiod_outputs_set(fio_handle, dev_handle, outputs_plus, outputs_minus, FIO_INPUT_POINTS_BYTES);
+  wait_for_frame(180);
+  fio_fiod_inputs_get(fio_handle, dev_handle, FIO_INPUTS_RAW, inputs, sizeof(inputs));
+  if (type == FIOTS1)
+    // Fix quirks in TS1 loopback cable
+    inputs[14] &= 0x3f;
+
+  for (int i = 0; i < len; i++) {
+    if (inputs[i] != outputs_plus[i]) {
+      // Test failed
+      if (!quiet_log) {
+        print_io(outputs_plus, inputs, len);
+      }
+      bitpos = outputs_plus[i];
+      for (int j = 0; j < 8; j++) {
+        if (bitpos & (1 << j)) {
+          return j + 1;
+        }
+      }
+    }
+  }
+  print_io(outputs_plus, inputs, len);
+  printf("\x1b[2A");
+
+  return 0;
 }
 
-int transbuf_test(FIO_DEVICE_TYPE type, int count)
-{
-	unsigned char outputs_plus[FIO_INPUT_POINTS_BYTES];
-	unsigned char outputs_minus[FIO_INPUT_POINTS_BYTES] = {0};
+int transbuf_test(FIO_DEVICE_TYPE type, int count) {
+  unsigned char outputs_plus[FIO_INPUT_POINTS_BYTES];
+  unsigned char outputs_minus[FIO_INPUT_POINTS_BYTES] = {0};
   FIO_TRANS_BUFFER trans_buf[1024];
   FIO_TRANS_STATUS status;
   int trans_count = count;
-	int number_of_input_bytes = (type == FIO332)?8:FIO_INPUT_POINTS_BYTES;
-	fio_hm_heartbeat(fio_handle);
+  int number_of_input_bytes = (type == FIO332) ? 8 : FIO_INPUT_POINTS_BYTES;
+  fio_hm_heartbeat(fio_handle);
   int ret = 0;
   printf("creating %d transitions...           \n", count);
 
   // configure inputs for transition reporting
   unsigned char transitions[FIO_INPUT_POINTS_BYTES];
-  for (int iter=0; iter<number_of_input_bytes; iter++) {
+  for (int iter = 0; iter < number_of_input_bytes; iter++) {
     transitions[iter] = 0xff;
   }
   fio_fiod_inputs_trans_set(fio_handle, dev_handle, transitions, number_of_input_bytes);
@@ -188,14 +198,14 @@ int transbuf_test(FIO_DEVICE_TYPE type, int count)
   };
 
   // Send frame 50 to reset the ms counter to zero
-  unsigned char zero[4] = { 0x00, 0x00, 0x00, 0x00 };
+  unsigned char zero[4] = {0x00, 0x00, 0x00, 0x00};
   fio_fiod_frame_write(fio_handle, dev_handle, 50, zero, 4);
   wait_for_frame(178);
 
   // Generate transitions
   while (trans_count) {
-    if (count/128 > 0) {
-      for (int j=0; j<8; j++) {
+    if (count / 128 > 0) {
+      for (int j = 0; j < 8; j++) {
         outputs_plus[j] = 0xff;
       }
       fio_fiod_outputs_set(fio_handle, dev_handle, outputs_plus, outputs_minus, sizeof outputs_plus);
@@ -204,14 +214,15 @@ int transbuf_test(FIO_DEVICE_TYPE type, int count)
       fio_fiod_outputs_set(fio_handle, dev_handle, outputs_plus, outputs_minus, sizeof outputs_plus);
       wait_for_frame(183);
       trans_count = trans_count - 128;
-    } else {
-      for (int j=0; j<(trans_count/2)+1; j++) {
+    }
+    else {
+      for (int j = 0; j < (trans_count / 2) + 1; j++) {
         FIO_BIT_SET(outputs_plus, j);
       }
       fio_fiod_outputs_set(fio_handle, dev_handle, outputs_plus, outputs_minus, sizeof outputs_plus);
       wait_for_frame(183);
       memset(outputs_plus, 0, sizeof outputs_plus);
-     fio_fiod_outputs_set(fio_handle, dev_handle, outputs_plus, outputs_minus, sizeof outputs_plus);
+      fio_fiod_outputs_set(fio_handle, dev_handle, outputs_plus, outputs_minus, sizeof outputs_plus);
       wait_for_frame(183);
       trans_count = 0;
     }
@@ -221,181 +232,216 @@ int transbuf_test(FIO_DEVICE_TYPE type, int count)
   wait_for_frame(182);
   if ((trans_count = fio_fiod_inputs_trans_read(fio_handle, dev_handle, &status, trans_buf, 1024)) > 0) {
     if ((trans_count < count) || (status != FIO_TRANS_SUCCESS)) {
-	    if (count <= 1024) {
-		printf("Error in trans count:exp %d act %d\n", count, trans_count);
-		ret = -1;
-	}
-	printf("Status %d rcvd for trans count %d\n", status, trans_count);
+      if (count <= 1024) {
+        printf("Error in trans count:exp %d act %d\n", count, trans_count);
+        ret = -1;
+      }
+      printf("Status %d rcvd for trans count %d\n", status, trans_count);
     }
     printf("read %d transitions from buffer\n", trans_count);
-  } else {
-      printf("Error reading transitions: ret=%d\n", trans_count);
-      ret = -1;
   }
- 
+  else {
+    printf("Error reading transitions: ret=%d\n", trans_count);
+    ret = -1;
+  }
+
 cleanup:
   // disable input transition reporting
-  for (int iter=0; iter<number_of_input_bytes; iter++) {
+  for (int iter = 0; iter < number_of_input_bytes; iter++) {
     transitions[iter] = 0x00;
   }
   fio_fiod_inputs_trans_set(fio_handle, dev_handle, transitions, number_of_input_bytes);
   wait_for_frame(179);
   //wait_for_frame(179);
-  
+
   return ret;
 }
 
-int main(int argc, char **argv)
-{
-	unsigned char output_map[FIO_OUTPUT_POINTS_BYTES];
-	unsigned char outputs_plus[FIO_INPUT_POINTS_BYTES];
-	int number_of_input_bytes = FIO_INPUT_POINTS_BYTES;
-	FIO_FRAME_SCHD frame_schedules[3];
-	struct sigaction act;
-	int err = 0;
-	FIO_DEVICE_TYPE fio_dev_type = FIO_UNDEF;
+int main(int argc, char** argv) {
+  unsigned char output_map[FIO_OUTPUT_POINTS_BYTES];
+  unsigned char outputs_plus[FIO_INPUT_POINTS_BYTES];
+  int number_of_input_bytes = FIO_INPUT_POINTS_BYTES;
+  FIO_FRAME_SCHD frame_schedules[3];
+  struct sigaction act;
+  int err = 0;
+  FIO_DEVICE_TYPE fio_dev_type = FIO_UNDEF;
 
-	printf("\nATC FIOAPI Loopback Test\n");
+  printf("\nATC FIOAPI Loopback Test\n");
 
-	if ((argc > 1) && (argv[1][0] == '-')) {
-		if (argv[1][1] == 'v') {
-			verbose_log = true;
-			printf("Verbose logging enabled\n");
-		} else if (argv[1][1] == 'q')
-			quiet_log = true;
-	}
-	
-	// Install signal handler for fio signal
-	memset(&act, 0, sizeof(act));
-	act.sa_handler = signal_handler;
-	act.sa_flags = 0;
-	sigaction(36/*FIO_SIGIO*/, &act, NULL);
+  static struct option long_options[] = {
+      {"silent", no_argument, 0, 's'},
+      {"verbose", no_argument, 0, 'v'},
+      {"extended", no_argument, 0, 'e'},
+      {"help", no_argument, 0, 'h'},
+      {0, 0, 0, 0}};
 
-	// Register with FIOAPI
-	if ((fio_handle = fio_register()) < 0) {
-		printf("Failed to fio_register, err(%d): %s\n",
-			fio_handle, strerror(errno));
-		return -1;
-	}
-	//printf("fio_register() successful\n");
-	// Register health monitor service
-	if (fio_hm_register(fio_handle, 100) != 0) {
-		printf("Failed fio_hm_register(), err(%d): %s\n",
-			fio_handle, strerror(errno));
-		fio_deregister(fio_handle);
-		return -1;
-	}
-	//printf("fio_hm_register() successful\n");
-	
-	// Determine io module type
-	switch (get_module_type()) {
-		case 1:
-			// 332 module type
-			if (verbose_log)
-				printf("FIO_332 module type found\n");
-			fio_dev_type = FIO332;
-			number_of_input_bytes = 8;
-			break;
-		case 2:
-			// TS1 module type
-			if (verbose_log)
-				printf("FIO_TS1 module type found\n");
-			fio_dev_type = FIOTS1;
-			break;
-			
-		default:
-			if (!quiet_log)
-				printf("No supported module type found\n");
-			fio_deregister(fio_handle);
-			return -1;
-			break;
-	}
-	
-	if ((dev_handle = fio_fiod_register(fio_handle, FIO_PORT_SP5, fio_dev_type)) < 0) {
-		printf("fio_fiod_register(FIO_PORT_SP5, %s),err(%d),errno(%s)\n",
-			(fio_dev_type == FIO332)?"FIO332":"FIOTS1", dev_handle, strerror(errno));
-		fio_deregister(fio_handle);
-		return -1;
-	}
-	//printf("dev_handle(%d) = fio_fiod_register() successful\n", dev_handle);
-	memset(output_map, 0xff, sizeof output_map);
-	FIO_BIT_CLEAR(output_map, 78);
-	FIO_BIT_CLEAR(output_map, 79);
-	if ((err = fio_fiod_outputs_reservation_set(fio_handle, dev_handle, output_map, sizeof(output_map))) < 0) {
-		printf ("fio_fiod_outputs_reservation_set( fio_handle(%d), dev_handle(%d) ), "
-			"errno(%s)\n", fio_handle, dev_handle, strerror(errno));
-			goto error_dereg;
-	}
-	//printf("fio_fiod_outputs_reservation_set() successful\n");
-	// Schedule FIO_INPUTS_RAW frame #52 (cancel frame #53)
-	frame_schedules[0].req_frame = 52; frame_schedules[0].frequency = FIO_HZ_10;
-	frame_schedules[1].req_frame = 53; frame_schedules[1].frequency = FIO_HZ_0;
-	frame_schedules[2].req_frame = 55; frame_schedules[2].frequency = FIO_HZ_10;
-	if (fio_fiod_frame_schedule_set(fio_handle, dev_handle, frame_schedules, 3) < 0) {
-		printf ("fio_fiod_frame_schedule_set() failed, errno(%s)\n", strerror(errno));
-		goto error_dereg;
-	}
-	// Enable this FIO module
-	fio_fiod_enable(fio_handle, dev_handle);
-	// Perform "walking 1" bit pattern test
-    printf("walking 1 bit test...                  \n");
-	for (int iter = 0; iter<number_of_input_bytes; iter++) {
-		memset(outputs_plus, 0, sizeof outputs_plus);
-		for(int j=0; j<8; j++) {
-			outputs_plus[iter] = (1<<j);
-			if ((err = loop_test(fio_dev_type, outputs_plus, number_of_input_bytes)) != 0) {
-				printf("Error I/O byte-bit %d-%d\n", iter+1, err);
-				goto error_dereg;
-			}
-		}
-	}
-	// Perform muliple bit pattern test
-    printf("random multiple bits test...           \n");
-	for (int iter=0; iter<100; iter++) {
-		// Obtain a random bit pattern for outputs of length (8*FIO_OUTPUT_POINTS_BYTES)
-		//getrandom(outputs_plus, sizeof outputs_plus, 0);
-		int rand_fd = open("/dev/urandom", O_RDONLY);
-		if (rand_fd < 0) {
-			printf("Failed to open /dev/urandom\n");
-			goto error_dereg;
-		}
-		read(rand_fd, outputs_plus, sizeof outputs_plus);
-		close (rand_fd);
-		
-		if (loop_test(fio_dev_type, outputs_plus, number_of_input_bytes) != 0) {
-			printf("Error after %d iterations\n", iter+1);
-			goto error_dereg;
-		}
-	}
-  
-  // Perform transition buffer test
-  // (The384Test, The640Test, The1152Test, The1276Test, OutputBitTest, TheTBGBitTest)
-  printf("transition buffer tests...             \n");
-  if (transbuf_test(fio_dev_type, 384) != 0) {
-    printf("Error: failed 384 transition test\n");
-    goto error_dereg;
-  }
-  
-  if (transbuf_test(fio_dev_type, 640) != 0) {
-    printf("Error: failed 640 transition test\n");
-    goto error_dereg;
-  }
-  
-  if (transbuf_test(fio_dev_type, 1152) != 0) {
-	
-    printf("Error: failed 1152 transition test\n");
-    goto error_dereg;
+  int opt;
+  while ((opt = getopt_long(argc, argv, "sveh", long_options, NULL)) != -1) {
+    switch (opt) {
+      case 's':
+        quiet_log = true;
+        ;
+        break;
+      case 'v':
+        verbose_log = true;
+        break;
+      case 'e':
+        extended_test = true;
+        break;
+      case 'h':
+        print_usage(argv[0]);
+        return 0;
+      default:
+        print_usage(argv[0]);
+        return 1;
+    }
   }
 
-	printf("Test Passed\n");
-	fio_fiod_disable(fio_handle, dev_handle);
-	fio_fiod_deregister(fio_handle, dev_handle);
-	fio_deregister(fio_handle);
-	return 0;
+  // Install signal handler for fio signal
+  memset(&act, 0, sizeof(act));
+  act.sa_handler = signal_handler;
+  act.sa_flags = 0;
+  sigaction(36 /*FIO_SIGIO*/, &act, NULL);
+
+  // Register with FIOAPI
+  if ((fio_handle = fio_register()) < 0) {
+    printf("Failed to fio_register, err(%d): %s\n", fio_handle, strerror(errno));
+    return -1;
+  }
+  //printf("fio_register() successful\n");
+  // Register health monitor service
+  if (fio_hm_register(fio_handle, 100) != 0) {
+    printf("Failed fio_hm_register(), err(%d): %s\n", fio_handle, strerror(errno));
+    fio_deregister(fio_handle);
+    return -1;
+  }
+  //printf("fio_hm_register() successful\n");
+
+  // Determine io module type
+  switch (get_module_type()) {
+    case 1:
+      // 332 module type
+      if (verbose_log)
+        printf("FIO_332 module type found\n");
+      fio_dev_type = FIO332;
+      number_of_input_bytes = 8;
+      break;
+    case 2:
+      // TS1 module type
+      if (verbose_log)
+        printf("FIO_TS1 module type found\n");
+      fio_dev_type = FIOTS1;
+      break;
+
+    default:
+      if (!quiet_log)
+        printf("No supported module type found\n");
+      fio_deregister(fio_handle);
+      return -1;
+      break;
+  }
+
+  if ((dev_handle = fio_fiod_register(fio_handle, FIO_PORT_SP5, fio_dev_type)) < 0) {
+    printf(
+        "fio_fiod_register(FIO_PORT_SP5, %s),err(%d),errno(%s)\n",
+        (fio_dev_type == FIO332) ? "FIO332" : "FIOTS1",
+        dev_handle,
+        strerror(errno));
+    fio_deregister(fio_handle);
+    return -1;
+  }
+  //printf("dev_handle(%d) = fio_fiod_register() successful\n", dev_handle);
+  memset(output_map, 0xff, sizeof output_map);
+  FIO_BIT_CLEAR(output_map, 78);
+  FIO_BIT_CLEAR(output_map, 79);
+  if ((err = fio_fiod_outputs_reservation_set(fio_handle, dev_handle, output_map, sizeof(output_map))) < 0) {
+    printf(
+        "fio_fiod_outputs_reservation_set( fio_handle(%d), dev_handle(%d) ), "
+        "errno(%s)\n",
+        fio_handle,
+        dev_handle,
+        strerror(errno));
+    goto error_dereg;
+  }
+  //printf("fio_fiod_outputs_reservation_set() successful\n");
+  // Schedule FIO_INPUTS_RAW frame #52 (cancel frame #53)
+  frame_schedules[0].req_frame = 52;
+  frame_schedules[0].frequency = FIO_HZ_10;
+  frame_schedules[1].req_frame = 53;
+  frame_schedules[1].frequency = FIO_HZ_0;
+  frame_schedules[2].req_frame = 55;
+  frame_schedules[2].frequency = FIO_HZ_10;
+  if (fio_fiod_frame_schedule_set(fio_handle, dev_handle, frame_schedules, 3) < 0) {
+    printf("fio_fiod_frame_schedule_set() failed, errno(%s)\n", strerror(errno));
+    goto error_dereg;
+  }
+  // Enable this FIO module
+  fio_fiod_enable(fio_handle, dev_handle);
+  // Perform "walking 1" bit pattern test
+  printf("walking 1 bit test...                  \n");
+  for (int iter = 0; iter < number_of_input_bytes; iter++) {
+    memset(outputs_plus, 0, sizeof outputs_plus);
+    for (int j = 0; j < 8; j++) {
+      outputs_plus[iter] = (1 << j);
+      if ((err = loop_test(fio_dev_type, outputs_plus, number_of_input_bytes)) != 0) {
+        printf("Error I/O byte-bit %d-%d\n", iter + 1, err);
+        goto error_dereg;
+      }
+    }
+  }
+  // Perform muliple bit pattern test
+  printf("random multiple bits test...           \n");
+  for (int iter = 0; iter < 100; iter++) {
+    // Obtain a random bit pattern for outputs of length (8*FIO_OUTPUT_POINTS_BYTES)
+    //getrandom(outputs_plus, sizeof outputs_plus, 0);
+    int rand_fd = open("/dev/urandom", O_RDONLY);
+    if (rand_fd < 0) {
+      printf("Failed to open /dev/urandom\n");
+      goto error_dereg;
+    }
+    read(rand_fd, outputs_plus, sizeof outputs_plus);
+    close(rand_fd);
+
+    if (loop_test(fio_dev_type, outputs_plus, number_of_input_bytes) != 0) {
+      printf("Error after %d iterations\n", iter + 1);
+      goto error_dereg;
+    }
+  }
+  printf("\x1b[2B");
+
+  if (extended_test) {
+    // Perform transition buffer test
+    // (The384Test, The640Test, The1152Test, The1276Test, OutputBitTest, TheTBGBitTest)
+    printf("transition buffer tests...             \n");
+    if (transbuf_test(fio_dev_type, 384) != 0) {
+      printf("Error: failed 384 transition test\n");
+      goto error_dereg;
+    }
+
+    if (transbuf_test(fio_dev_type, 640) != 0) {
+      printf("Error: failed 640 transition test\n");
+      goto error_dereg;
+    }
+
+    if (transbuf_test(fio_dev_type, 1152) != 0) {
+      printf("Error: failed 1152 transition test\n");
+      goto error_dereg;
+    }
+
+    if (transbuf_test(fio_dev_type, 1276) != 0) {
+      printf("Error: failed 1276 transition test\n");
+      goto error_dereg;
+    }
+  }
+
+  printf("Test Passed\n");
+  fio_fiod_disable(fio_handle, dev_handle);
+  fio_fiod_deregister(fio_handle, dev_handle);
+  fio_deregister(fio_handle);
+  return 0;
 
 error_dereg:
-	fio_fiod_deregister(fio_handle, dev_handle);
-	fio_deregister(fio_handle);
-	return -1;
-
+  fio_fiod_deregister(fio_handle, dev_handle);
+  fio_deregister(fio_handle);
+  return -1;
 }
