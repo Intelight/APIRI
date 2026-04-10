@@ -34,6 +34,7 @@
 
 #define ATC_SPXS_WRITE_CONFIG 0
 #define ATC_SPXS_READ_CONFIG  1
+#define ATC_SPXS_DEBUG        2
 
 #define ATC_SDLC 0
 #define ATC_SYNC 1

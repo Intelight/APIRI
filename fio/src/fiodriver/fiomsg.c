@@ -1392,6 +1392,9 @@ fiomsg_timer_callback_rtn fiomsg_rx_task( fiomsg_timer_callback_arg arg )
 				p_rx_pend->frame_no);
 		/* Update rx error count */
 		fiomsg_rx_update_frame( p_port, p_rx_pend, false );
+
+		sdlc_kernel_ioctl(p_port->context, ATC_SPXS_DEBUG, NULL);
+
 	}
 	/* Unlock resources */
 	/* TEG - DO NOT LOCK SEMAPHORES, MUST USE SPINLOCKS */
