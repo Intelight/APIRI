@@ -68,7 +68,7 @@ FIO Message Scheduler (FIOMSG).
 /* Timer definitions */
 #if defined(CONFIG_HIGH_RES_TIMERS)
 #include	<linux/hrtimer.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,11,0)
 static inline ktime_t ktime_add_ms(const ktime_t kt, const u64 msec)
 {
 	return ktime_add_ns(kt, msec * NSEC_PER_MSEC);
