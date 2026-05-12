@@ -272,7 +272,11 @@ static int __init fp_init(void)
 	printk( KERN_ALERT "\n\nfront_panel loaded at major = %d\n", fp_major );
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,31)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
+	fp_class = class_create("front-panel");
+#else
 	fp_class = class_create(THIS_MODULE, "front-panel");
+#endif
 	if (IS_ERR(fp_class)) {
 		printk(KERN_ERR "Error creating front-panel class.\n");
 	}

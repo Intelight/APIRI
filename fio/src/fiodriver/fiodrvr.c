@@ -56,7 +56,11 @@ static int fio_release(struct inode *inode, struct file *filp)
  */
 static struct class *fio_class;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0)
+static char *fio_devnode(const struct device *dev, umode_t *mode)
+#else
 static char *fio_devnode(struct device *dev, umode_t *mode)
+#endif
 {
 	return kasprintf(GFP_KERNEL, "%s", dev_name(dev));
 }
@@ -147,7 +151,11 @@ static int __init fio_init(void)
 	}
 
 	/* Create a class for this device and add the device */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
+	fio_class = class_create("fio");
+#else
 	fio_class = class_create(THIS_MODULE, "fio");
+#endif
 	if (IS_ERR(fio_class)) {
 		printk(KERN_ERR "Error creating fio class.\n");
 		cdev_del(&fio_cdev);
