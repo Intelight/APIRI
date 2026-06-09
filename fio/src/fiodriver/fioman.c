@@ -53,7 +53,7 @@ TEG - NO LOCKING IS IN PLACE.  THIS IS NOT AN ISSUE FOR INITIAL DEVELOPMENT
 /*#include	"fiomsg.c"*/		/* FIOMSG Code */
 /*#include	"fioframe.c"*/
 #include <linux/gpio.h>
-extern int faultmon_gpio;
+extern struct gpio_desc *faultmon_gpiod;
 
 /*  Definition section.
 -----------------------------------------------------------------------------*/
@@ -1163,11 +1163,10 @@ fioman_add_def_fiod_frames
 		case FIOOUT14SIU1:case FIOOUT14SIU2:
 		case FIO332:case FIOTS1:case FIOTS2:
 		{
-                        if (faultmon_gpio != -1) {
-                                if (p_fiod->fiod.fiod == FIOTS2) {
-                                        
-                                        break;
-                                }
+            if (!IS_ERR_OR_NULL(faultmon_gpiod)) {
+                if (p_fiod->fiod.fiod == FIOTS2) {
+                    break;
+                }
 			}
 
 			/* Ready frame 49 for this device */
@@ -2700,11 +2699,11 @@ fioman_ts_fault_monitor_set
 		return (-EINVAL);
 
 pr_debug("fioman_ts_fault_monitor_set: %d\n", p_sys_fiod->fm_state);
-        if (faultmon_gpio != -1) {
-                if (gpio_cansleep(faultmon_gpio))
-                        gpio_set_value_cansleep(faultmon_gpio, p_sys_fiod->fm_state?1:0);
+        if (!IS_ERR_OR_NULL(faultmon_gpiod)) {
+                if (gpiod_cansleep(faultmon_gpiod))
+                        gpiod_set_value_cansleep(faultmon_gpiod, p_sys_fiod->fm_state?1:0);
                 else
-                        gpio_set_value(faultmon_gpio, p_sys_fiod->fm_state?1:0);
+                        gpiod_set_value(faultmon_gpiod, p_sys_fiod->fm_state?1:0);
         }
                 
 	return 0;

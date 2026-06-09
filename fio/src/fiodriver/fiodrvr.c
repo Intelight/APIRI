@@ -33,7 +33,7 @@
 dev_t fio_dev; /* Major / Minor */
 struct cdev fio_cdev; /* character device */
 
-int faultmon_gpio = -1;
+struct gpio_desc *faultmon_gpiod = NULL;
 
 
 static long fio_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
@@ -56,7 +56,11 @@ static int fio_release(struct inode *inode, struct file *filp)
  */
 static struct class *fio_class;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0)
+static char *fio_devnode(const struct device *dev, umode_t *mode)
+#else
 static char *fio_devnode(struct device *dev, umode_t *mode)
+#endif
 {
 	return kasprintf(GFP_KERNEL, "%s", dev_name(dev));
 }
@@ -71,27 +75,20 @@ static const struct file_operations fio_fops = {
 
 static int fio_probe(struct platform_device *pdev)
 {
-	struct device_node *np = pdev->dev.of_node;
-	int gpio;
+	struct device *dev = &pdev->dev;
+	struct gpio_desc *gpiod;
 
-	gpio = of_get_gpio(np, 0); // NEMA controller type GPIO
-	if (gpio_is_valid(gpio)
-		&& (gpio_request_one(gpio, GPIOF_DIR_IN, "fiodriver") == 0)
-		&& !gpio_get_value(gpio)) {
+	gpiod = devm_gpiod_get(dev, "fiodriver", GPIOD_IN);
+	if (!IS_ERR(gpiod) && !gpiod_get_value(gpiod)) {
 		// NEMA controller type is TS2-1
-		faultmon_gpio = of_get_gpio(np, 1);
-		if (!gpio_is_valid(faultmon_gpio)) {
-			faultmon_gpio = -1;
-			dev_err(&pdev->dev, "faultmon gpio not valid\n");
-		} else if (gpio_request(faultmon_gpio, "fiodriver") != 0) {
-			faultmon_gpio = -1;
-			dev_err(&pdev->dev, "faultmon gpio request failed\n");
+		faultmon_gpiod = devm_gpiod_get(dev, "faultmon", GPIOD_OUT_LOW);
+		if (IS_ERR(faultmon_gpiod)) {
+			dev_err(dev, "faultmon gpio request failed\n");
 		} else {
-			gpio_direction_output(faultmon_gpio, 0); /* initially OFF */
-			if (gpio_cansleep(faultmon_gpio))
-				gpio_set_value_cansleep(faultmon_gpio, 0);
+			if (gpiod_cansleep(faultmon_gpiod))
+				gpiod_set_value_cansleep(faultmon_gpiod, 0);
 			else
-				gpio_set_value(faultmon_gpio, 0);
+				gpiod_set_value(faultmon_gpiod, 0);
 			dev_info(&pdev->dev, "faultmon gpio enabled\n");
 		}
 	}
@@ -105,8 +102,6 @@ static int fio_probe(struct platform_device *pdev)
 
 static int fio_remove(struct platform_device *pdev)
 {
-
-	gpio_free(faultmon_gpio);
 
 	dev_set_drvdata(&pdev->dev, NULL);
 
@@ -156,7 +151,11 @@ static int __init fio_init(void)
 	}
 
 	/* Create a class for this device and add the device */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
+	fio_class = class_create("fio");
+#else
 	fio_class = class_create(THIS_MODULE, "fio");
+#endif
 	if (IS_ERR(fio_class)) {
 		printk(KERN_ERR "Error creating fio class.\n");
 		cdev_del(&fio_cdev);
